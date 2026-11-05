@@ -45,6 +45,20 @@
     toastTimer = setTimeout(() => (t.hidden = true), 1600);
   }
 
+  /** 1回目で「もう一度押して確定」に変わり、3秒以内にもう一度押すと実行 */
+  function twoTap(btn, armedText, fn) {
+    const label = btn.textContent;
+    let timer = null;
+    const disarm = () => { clearTimeout(timer); timer = null; btn.classList.remove('armed'); btn.textContent = label; };
+    btn.addEventListener('click', () => {
+      if (timer) { disarm(); fn(); return; }
+      btn.classList.add('armed');
+      btn.textContent = armedText;
+      timer = setTimeout(disarm, 3000);
+    });
+    return disarm;
+  }
+
   // ---------- タブ ----------
   $$('.tab').forEach((b) => b.addEventListener('click', () => {
     $$('.tab').forEach((x) => x.classList.toggle('active', x === b));
@@ -70,17 +84,21 @@
     const rows = [['基本給', t.base]];
     if (t.night) rows.push(['深夜手当', t.night]);
     if (t.overtime) rows.push(['残業手当', t.overtime]);
+    if (t.nightOvertime) rows.push(['深夜残業手当（1.5倍）', t.nightOvertime]);
     rows.push(['交通費', t.transport]);
     $('#breakdown').innerHTML = rows.map((r) => `<dt>${r[0]}</dt><dd>${yen(r[1])}</dd>`).join('');
 
     const showWage = s.wages.length > 1;
+    const showTrans = s.transport.mode === 'daily' && s.transport.options.length > 1;
     $('#shiftList').innerHTML = sum.rows.length
       ? sum.rows.map(({ shift: sh, result: r }) => {
         const d = Number(sh.date.slice(8));
         const w = showWage ? s.wages.find((x) => x.id === sh.wageId) : null;
+        const tr = showTrans ? s.transport.options.find((x) => x.id === sh.transportId) : null;
+        const tags = [w && w.name, tr && tr.name].filter(Boolean).join('・');
         return `<li data-id="${esc(sh.id)}">
           <span class="day">${d}<small>${WEEK[C.dayOfWeek(sh.date)]}</small></span>
-          <span class="time">${esc(sh.start)}–${esc(sh.end)}${w ? `<small>${esc(w.name)}</small>` : ''}</span>
+          <span class="time">${esc(sh.start)}–${esc(sh.end)}${tags ? `<small>${esc(tags)}</small>` : ''}</span>
           <span class="pay">${r.error ? '—' : yen(r.pay.total)}</span>
         </li>`;
       }).join('')
@@ -112,19 +130,29 @@
   const form = $('#shiftForm');
   let last = null; // 直前に保存したシフト（次の入力の初期値）
   let pickedWage = null;
+  let pickedTrans = null;
 
-  function renderWagePick() {
+  function renderPicks() {
     const ws = state.settings.wages;
     if (!ws.some((w) => w.id === pickedWage)) pickedWage = ws[0].id;
-    $('#wagePick').innerHTML = ws.length > 1
-      ? ws.map((w) => `<button type="button" data-w="${esc(w.id)}" class="${w.id === pickedWage ? 'on' : ''}">${esc(w.name)}<small>${Number(w.hourly).toLocaleString()}円</small></button>`).join('')
-      : '';
+    $('#wagePickBox').hidden = ws.length < 2;
+    $('#wagePick').innerHTML = ws.map((w) => `<button type="button" data-w="${esc(w.id)}" class="${w.id === pickedWage ? 'on' : ''}">${esc(w.name)}<small>${Number(w.hourly).toLocaleString()}円</small></button>`).join('');
+    const ts = state.settings.transport.options;
+    if (!ts.some((t) => t.id === pickedTrans)) pickedTrans = ts[0].id;
+    $('#transPickBox').hidden = ts.length < 2 || state.settings.transport.mode !== 'daily';
+    $('#transPick').innerHTML = ts.map((t) => `<button type="button" data-t="${esc(t.id)}" class="${t.id === pickedTrans ? 'on' : ''}">${esc(t.name)}<small>${Number(t.amount).toLocaleString()}円</small></button>`).join('');
   }
   $('#wagePick').addEventListener('click', (e) => {
     const b = e.target.closest('[data-w]');
     if (!b) return;
     pickedWage = b.dataset.w;
-    renderWagePick(); updatePreview();
+    renderPicks(); updatePreview();
+  });
+  $('#transPick').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-t]');
+    if (!b) return;
+    pickedTrans = b.dataset.t;
+    renderPicks(); updatePreview();
   });
 
   function openSheet(id) {
@@ -134,6 +162,7 @@
       form.sid.value = sh.id;
       form.date.value = sh.date; form.start.value = sh.start; form.end.value = sh.end; form.breakMin.value = sh.breakMin || 0;
       pickedWage = sh.wageId;
+      pickedTrans = sh.transportId;
       $('#formTitle').textContent = 'シフトを編集';
       $('#deleteBtn').hidden = false;
     } else {
@@ -141,10 +170,12 @@
       form.date.value = nextDate();
       if (last) { form.start.value = last.start; form.end.value = last.end; form.breakMin.value = last.breakMin; }
       pickedWage = last ? last.wageId : null;
+      pickedTrans = last ? last.transportId : null;
       $('#formTitle').textContent = 'シフトを追加';
       $('#deleteBtn').hidden = true;
     }
-    renderWagePick();
+    disarmDelete();
+    renderPicks();
     updatePreview();
     sheet.showModal();
   }
@@ -164,11 +195,13 @@
     const w = state.settings.wages.find((x) => x.id === pickedWage) || state.settings.wages[0];
     // 時給を選び直していなければ、保存済みの時給をそのまま使う
     const hourly = old && old.wageId === w.id && old.hourly != null ? old.hourly : Number(w.hourly) || 0;
+    const t = state.settings.transport.options.find((x) => x.id === pickedTrans) || state.settings.transport.options[0];
+    const transport = old && old.transportId === t.id && old.transport != null ? old.transport : Number(t.amount) || 0;
     return {
       id: form.sid.value || uid(),
       date: form.date.value, start: form.start.value, end: form.end.value,
       breakMin: Number(form.breakMin.value) || 0,
-      wageId: w.id, hourly,
+      wageId: w.id, hourly, transportId: t.id, transport,
     };
   }
   function updatePreview() {
@@ -182,7 +215,11 @@
     const span = r.workedMin + r.breakMin; // 労基法34条：6時間超は45分、8時間超は60分の休憩
     const warn = span > 480 && r.breakMin < 60 ? '8時間を超えるときは休憩60分以上が必要です'
       : span > 360 && r.breakMin < 45 ? '6時間を超えるときは休憩45分以上が必要です' : '';
-    el.innerHTML = `<strong>${yen(r.pay.total)}</strong><span class="muted">${hours(r.workedMin)}</span>${warn ? `<div class="warn">${warn}</div>` : ''}`;
+    const parts = [hours(r.workedMin)];
+    if (r.nightOtMin) parts.push(`深夜残業 ${hours(r.nightOtMin)}（1.5倍）`);
+    if (r.nightMin - r.nightOtMin) parts.push(`深夜 ${hours(r.nightMin - r.nightOtMin)}`);
+    if (r.otMin - r.nightOtMin) parts.push(`残業 ${hours(r.otMin - r.nightOtMin)}`);
+    el.innerHTML = `<strong>${yen(r.pay.total)}</strong><span class="muted">${esc(parts.join(' ・ '))}</span>${warn ? `<div class="warn">${warn}</div>` : ''}`;
   }
   form.addEventListener('input', updatePreview);
   form.addEventListener('submit', (e) => {
@@ -200,8 +237,7 @@
   });
   $('#closeSheet').addEventListener('click', () => sheet.close());
   sheet.addEventListener('click', (e) => { if (e.target === sheet) sheet.close(); });
-  $('#deleteBtn').addEventListener('click', () => {
-    if (!confirm('このシフトを削除しますか？')) return;
+  const disarmDelete = twoTap($('#deleteBtn'), 'もう一度押すと削除', () => {
     state.shifts = state.shifts.filter((x) => x.id !== form.sid.value);
     save(); sheet.close(); render(); toast('削除しました');
   });
@@ -214,12 +250,20 @@
   function fillSettings() {
     const s = state.settings;
     const set = (n, v) => { const el = sf.elements[n]; if (el.type === 'checkbox') el.checked = !!v; else el.value = v; };
-    set('transport.daily', s.transport.daily);
     set('night.enabled', s.night.enabled); set('night.start', s.night.start); set('night.end', s.night.end); set('night.ratePct', Math.round(s.night.rate * 100));
     set('overtime.enabled', s.overtime.enabled); set('overtime.thresholdHours', s.overtime.thresholdHours); set('overtime.ratePct', Math.round(s.overtime.rate * 100));
+    set('nightOvertime.ratePct', Math.round(s.nightOvertime.rate * 100));
     set('transport.mode', s.transport.mode); set('transport.monthly', s.transport.monthly);
     set('closingDay', s.closingDay); set('payMonthOffset', s.payMonthOffset); set('payDay', s.payDay);
-    renderWageRows(); renderWallRows();
+    renderWageRows(); renderTransRows(); renderWallRows();
+  }
+  function renderTransRows() {
+    const ts = state.settings.transport.options;
+    $('#transRows').innerHTML = ts.map((t, i) => `<div class="row" data-i="${i}">
+      <input type="text" class="name" data-k="name" value="${esc(t.name)}" maxlength="12" placeholder="名前">
+      <span class="unit"><input type="number" data-k="amount" min="0" inputmode="numeric" value="${esc(t.amount)}">円</span>
+      ${ts.length > 1 ? '<button type="button" class="del" data-act="deltrans" aria-label="削除">×</button>' : ''}
+    </div>`).join('');
   }
   function renderWageRows() {
     const ws = state.settings.wages;
@@ -242,7 +286,14 @@
     const num = (n, d) => { const v = Number(g(n).value); return g(n).value === '' || isNaN(v) ? d : v; };
     s.night = { enabled: g('night.enabled').checked, start: g('night.start').value || '22:00', end: g('night.end').value || '05:00', rate: num('night.ratePct', 25) / 100 };
     s.overtime = { enabled: g('overtime.enabled').checked, thresholdHours: num('overtime.thresholdHours', 8), rate: num('overtime.ratePct', 25) / 100 };
-    s.transport = { mode: g('transport.mode').value, daily: num('transport.daily', 0), monthly: num('transport.monthly', 0) };
+    s.nightOvertime = { rate: num('nightOvertime.ratePct', 50) / 100 };
+    s.transport.mode = g('transport.mode').value;
+    s.transport.monthly = num('transport.monthly', 0);
+    $$('#transRows [data-i]').forEach((row) => {
+      const t = s.transport.options[Number(row.dataset.i)];
+      t.name = $('[data-k=name]', row).value.trim() || '交通費';
+      t.amount = Number($('[data-k=amount]', row).value) || 0;
+    });
     s.closingDay = num('closingDay', 0); s.payMonthOffset = num('payMonthOffset', 1); s.payDay = num('payDay', 25);
     $$('#wageRows [data-i]').forEach((row) => {
       const w = s.wages[Number(row.dataset.i)];
@@ -270,6 +321,19 @@
     state.settings.wages.splice(Number(e.target.closest('[data-i]').dataset.i), 1);
     save(); renderWageRows();
   });
+  $('#addTrans').addEventListener('click', () => {
+    readSettings();
+    const ts = state.settings.transport.options;
+    ts.push({ id: uid(), name: `交通費${ts.length + 1}`, amount: 0 });
+    save(); renderTransRows();
+    $('#transRows .row:last-child [data-k=name]').select();
+  });
+  $('#transRows').addEventListener('click', (e) => {
+    if (!e.target.closest('[data-act=deltrans]')) return;
+    readSettings();
+    state.settings.transport.options.splice(Number(e.target.closest('[data-i]').dataset.i), 1);
+    save(); renderTransRows();
+  });
   $('#addWall').addEventListener('click', () => {
     readSettings();
     state.settings.walls.push({ label: '新しい壁', amount: 1000000, includeTransport: false });
@@ -292,12 +356,14 @@
   }
   $('#exportCsv').addEventListener('click', () => {
     const rows = C.calcShifts(state.settings, state.shifts);
-    const head = ['日付', '曜日', '出勤', '退勤', '休憩(分)', '実働(分)', '深夜(分)', '残業(分)', '時給名', '時給', '基本給', '深夜手当', '残業手当', '給与', '交通費'];
+    const head = ['日付', '曜日', '出勤', '退勤', '休憩(分)', '実働(分)', '深夜(分)', '残業(分)', '時給名', '時給', '基本給', '深夜手当', '残業手当', '深夜残業手当', '給与', '交通費名', '交通費'];
     const q = (v) => { const s = String(v == null ? '' : v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
     const lines = [head.join(',')].concat(rows.map(({ shift: s, result: r, transport }) => {
       const w = state.settings.wages.find((x) => x.id === s.wageId);
+      const tr = state.settings.transport.options.find((x) => x.id === s.transportId);
       return [s.date, WEEK[C.dayOfWeek(s.date)], s.start, s.end, r.breakMin, r.workedMin, r.nightMin, r.otMin, w ? w.name : '', r.wage,
-        Math.round(r.pay.base), Math.round(r.pay.night), Math.round(r.pay.overtime), Math.round(r.pay.total), transport].map(q).join(',');
+        Math.round(r.pay.base), Math.round(r.pay.night), Math.round(r.pay.overtime), Math.round(r.pay.nightOvertime), Math.round(r.pay.total),
+        tr ? tr.name : '', transport].map(q).join(',');
     }));
     download(`kyuryo-${today()}.csv`, '﻿' + lines.join('\r\n'), 'text/csv'); // BOM付きでExcelでも文字化けしない
   });
@@ -312,16 +378,14 @@
       try {
         const d = JSON.parse(r.result);
         if (!Array.isArray(d.shifts)) throw new Error();
-        if (!confirm(`シフト${d.shifts.length}件のバックアップで上書きしますか？`)) return;
         state = C.migrate(d);
-        save(); fillSettings(); render(); toast('戻しました');
+        save(); fillSettings(); render(); toast(`シフト${state.shifts.length}件を戻しました`);
       } catch (err) { toast('このファイルは読み込めませんでした'); }
       e.target.value = '';
     };
     r.readAsText(f);
   });
-  $('#resetAll').addEventListener('click', () => {
-    if (!confirm('シフトと設定をすべて消します。よろしいですか？')) return;
+  twoTap($('#resetAll'), 'もう一度押すとすべて消えます', () => {
     state = C.migrate(null);
     save(); fillSettings(); render(); toast('消しました');
   });

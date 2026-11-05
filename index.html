@@ -45,11 +45,13 @@
           <div id="wageRows"></div>
           <button type="button" class="link" id="addWage">＋ 時給を追加</button>
         </div>
-        <p class="hint">変えても、入力済みのシフトの金額は変わりません。</p>
 
+        <div class="label">交通費（1日・往復）</div>
         <div class="group">
-          <label class="row">交通費（1日・往復）<span class="unit"><input type="number" name="transport.daily" min="0" inputmode="numeric">円</span></label>
+          <div id="transRows"></div>
+          <button type="button" class="link" id="addTrans">＋ 交通費を追加</button>
         </div>
+        <p class="hint">金額を変えても、入力済みのシフトは変わりません。</p>
 
         <details class="group">
           <summary>詳しい設定</summary>
@@ -59,9 +61,10 @@
           <label class="row">残業割増<input type="checkbox" name="overtime.enabled"></label>
           <label class="row">残業になる時間<span class="unit">1日<input type="number" name="overtime.thresholdHours" min="1" step="0.5" inputmode="decimal">時間超</span></label>
           <label class="row">残業の割増率<span class="unit"><input type="number" name="overtime.ratePct" min="0" inputmode="numeric">%</span></label>
+          <label class="row">深夜かつ残業の割増率<span class="unit"><input type="number" name="nightOvertime.ratePct" min="0" inputmode="numeric">%</span></label>
           <label class="row">交通費の出し方
             <select name="transport.mode">
-              <option value="daily">出勤日ごと</option>
+              <option value="daily">出勤日ごとに選ぶ</option>
               <option value="monthly">毎月定額</option>
               <option value="none">なし</option>
             </select>
@@ -108,7 +111,8 @@
         <button type="submit" class="link strong">保存</button>
       </div>
       <input type="hidden" name="sid">
-      <div id="wagePick" class="seg"></div>
+      <div id="wagePickBox"><div class="label">時給</div><div id="wagePick" class="seg"></div></div>
+      <div id="transPickBox"><div class="label">交通費</div><div id="transPick" class="seg"></div></div>
       <div class="group">
         <label class="row">日付<input type="date" name="date" required></label>
         <label class="row">出勤<input type="time" name="start" required></label>
@@ -116,7 +120,7 @@
         <label class="row">休憩<span class="unit"><input type="number" name="breakMin" min="0" step="5" inputmode="numeric" value="0">分</span></label>
       </div>
       <div id="preview" class="preview"></div>
-      <button type="button" class="link danger solo" id="deleteBtn" hidden>削除</button>
+      <button type="button" class="link danger solo" id="deleteBtn" hidden>このシフトを削除</button>
     </form>
   </dialog>
 

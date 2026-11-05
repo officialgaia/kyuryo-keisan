@@ -5,7 +5,7 @@ const C = require('../calc.js');
 function base(over) {
   const s = C.defaultSettings();
   s.wages = [{ id: 'a', name: '通常', hourly: 1200 }, { id: 'b', name: '土日', hourly: 1300 }];
-  s.transport = { mode: 'daily', daily: 500, monthly: 0 };
+  s.transport = { mode: 'daily', monthly: 0, options: [{ id: 't1', name: '電車', amount: 500 }, { id: 't2', name: 'バス', amount: 700 }] };
   return Object.assign(s, over || {});
 }
 
@@ -49,14 +49,29 @@ test('日付をまたぐシフト', () => {
   assert.equal(r.pay.total, 6000 + 1200);
 });
 
-test('8時間超は25%増し、深夜と重なると50%増し', () => {
+test('深夜かつ8時間超の時間は時給の1.5倍', () => {
   // 14:00〜24:30 休憩90分（中ほど 18:15〜19:45）→ 実働9h。8hを超える 23:30〜24:30 は深夜かつ残業
   const r = C.calcShift(base(), { date: '2026-11-04', start: '14:00', end: '00:30', breakMin: 90, wageId: 'a' });
   assert.equal(r.workedMin, 540);
   assert.equal(r.otMin, 60);
   assert.equal(r.nightMin, 150);
-  // 基本 9h×1200 / 深夜 2.5h×300 / 残業 1h×300
-  assert.equal(r.pay.total, 10800 + 750 + 300);
+  assert.equal(r.nightOtMin, 60);
+  // 深夜だけ 1.5h は1.25倍、深夜かつ残業 1h は1.5倍（1200×1.5＝1800）
+  assert.equal(r.pay.night, 450);
+  assert.equal(r.pay.nightOvertime, 600);
+  assert.equal(r.pay.total, 10800 + 450 + 600);
+});
+
+test('深夜かつ残業の割増率は変えられる', () => {
+  const s = base({ nightOvertime: { rate: 0.6 } });
+  const r = C.calcShift(s, { date: '2026-11-04', start: '14:00', end: '00:30', breakMin: 90, wageId: 'a' });
+  assert.equal(r.pay.nightOvertime, 720);
+});
+
+test('8時間超（深夜でない）は1.25倍', () => {
+  const r = C.calcShift(base(), { date: '2026-11-04', start: '08:00', end: '18:00', breakMin: 60, wageId: 'a' });
+  assert.equal(r.otMin, 60);
+  assert.equal(r.pay.total, 9 * 1200 + 300);
 });
 
 test('同じ日の2つ目のシフトは合算で8時間超を判定、交通費は1日1回', () => {
@@ -66,6 +81,17 @@ test('同じ日の2つ目のシフトは合算で8時間超を判定、交通費
   ]);
   assert.equal(rows[1].result.otMin, 120);
   assert.equal(rows[0].transport + rows[1].transport, 500);
+});
+
+test('交通費を選べる（1日1回、その日の最初のシフトの交通費）', () => {
+  const rows = C.calcShifts(base(), [
+    { date: '2026-11-05', start: '10:00', end: '12:00', wageId: 'a', transportId: 't2' },
+    { date: '2026-11-05', start: '14:00', end: '16:00', wageId: 'a', transportId: 't1' },
+    { date: '2026-11-06', start: '10:00', end: '12:00', wageId: 'a', transportId: 't1', transport: 480 },
+  ]);
+  assert.deepEqual(rows.map((r) => r.transport), [700, 0, 480]);
+  // 選んだ交通費が消えていたら最初の交通費
+  assert.equal(C.transportOf(base(), { transportId: 'zzz' }), 500);
 });
 
 test('締め日（15日締め）の期間と支給日', () => {
@@ -90,7 +116,7 @@ test('月の集計（時給が違うシフトの合計、交通費は分けて�
 });
 
 test('交通費を月額定額にする', () => {
-  const s = base({ transport: { mode: 'monthly', daily: 0, monthly: 8000 } });
+  const s = base({ transport: { mode: 'monthly', monthly: 8000, options: [{ id: 't1', name: '電車', amount: 500 }] } });
   assert.equal(C.summarizePeriod(s, [{ date: '2026-11-02', start: '10:00', end: '11:00', wageId: 'a' }], '2026-11').sum.transport, 8000);
   assert.equal(C.summarizePeriod(s, [], '2026-11').sum.transport, 0);
 });
@@ -105,9 +131,9 @@ test('年間合計は支給日ベース', () => {
 
 test('前のバージョンのデータを読み込める（時給の改定履歴 → 保存時の時給）', () => {
   const old = {
-    settings: { wages: [{ from: '2026-01-01', hourly: 1200 }, { from: '2026-10-01', hourly: 1300 }], holiday: { addPerHour: 50 }, rounding: { unit: 15 } },
+    settings: { wages: [{ from: '2026-01-01', hourly: 1200 }, { from: '2026-10-01', hourly: 1300 }], holiday: { addPerHour: 50 }, rounding: { unit: 15 }, transport: { mode: 'daily', daily: 480, monthly: 0 } },
     shifts: [
-      { id: 'x', date: '2026-09-30', start: '10:00', end: '11:00', breakMin: 0, memo: 'a' },
+      { id: 'x', date: '2026-09-30', start: '10:00', end: '11:00', breakMin: 0, memo: 'a', transport: 300 },
       { id: 'y', date: '2026-10-01', start: '10:00', end: '11:00', breakMin: 0 },
     ],
   };
@@ -116,8 +142,15 @@ test('前のバージョンのデータを読み込める（時給の改定履�
   assert.equal(m.shifts[0].hourly, 1200);
   assert.equal(m.shifts[1].hourly, 1300);
   assert.equal(m.settings.holiday, undefined);
+  assert.deepEqual(m.settings.transport.options, [{ id: 't1', name: '通常', amount: 480 }]);
+  assert.equal(m.settings.transport.daily, undefined);
+  assert.equal(m.shifts[0].transport, 300);
+  assert.equal(m.shifts[1].transport, 480);
+  assert.equal(m.settings.nightOvertime.rate, 0.5);
   // 新しい形のデータはそのまま
   const again = C.migrate(m);
   assert.deepEqual(again.settings.wages, m.settings.wages);
   assert.equal(again.shifts[0].hourly, 1200);
+  assert.deepEqual(again.settings.transport.options, m.settings.transport.options);
+  assert.equal(again.shifts[1].transport, 480);
 });

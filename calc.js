@@ -19,8 +19,11 @@
       wages: [{ id: 'w1', name: '通常', hourly: 1200 }],
       night: { enabled: true, start: '22:00', end: '05:00', rate: 0.25 },
       overtime: { enabled: true, thresholdHours: 8, rate: 0.25 },
-      // mode: 'daily'（出勤日ごと） | 'monthly'（定額） | 'none'
-      transport: { mode: 'daily', daily: 0, monthly: 0 },
+      // 深夜かつ残業の時間の割増率（0.5 = 時給の1.5倍）
+      nightOvertime: { rate: 0.5 },
+      // mode: 'daily'（出勤日ごとに選んだ交通費） | 'monthly'（定額） | 'none'
+      // options: 名前付きの交通費。シフトごとに選ぶ
+      transport: { mode: 'daily', monthly: 0, options: [{ id: 't1', name: '通常', amount: 0 }] },
       closingDay: 0, // 0 = 末日締め
       payMonthOffset: 1, // 0 = 当月払い, 1 = 翌月払い
       payDay: 25,
@@ -67,6 +70,14 @@
     return w ? Number(w.hourly) || 0 : 0;
   }
 
+  /** シフトの交通費：保存時の金額 → 選んだ交通費 → 最初の交通費 */
+  function transportOf(settings, shift) {
+    if (shift.transport != null && shift.transport !== '' && !isNaN(Number(shift.transport))) return Number(shift.transport);
+    const list = (settings.transport && settings.transport.options) || [];
+    const t = list.find((x) => x.id === shift.transportId) || list[0];
+    return t ? Number(t.amount) || 0 : 0;
+  }
+
   function isNightMinute(settings, minuteOfDay) {
     const n = settings.night;
     if (!n || !n.enabled) return false;
@@ -84,7 +95,7 @@
     priorWorkedMin = priorWorkedMin || 0;
     let start = toMin(shift.start);
     let end = toMin(shift.end);
-    const empty = { workedMin: 0, nightMin: 0, otMin: 0, breakMin: 0, wage: 0, pay: { base: 0, night: 0, overtime: 0, total: 0 } };
+    const empty = { workedMin: 0, nightMin: 0, otMin: 0, nightOtMin: 0, breakMin: 0, wage: 0, pay: { base: 0, night: 0, overtime: 0, nightOvertime: 0, total: 0 } };
     if (start === null || end === null) return Object.assign(empty, { error: '時刻が正しくありません' });
     if (end <= start) end += DAY; // 日付をまたぐシフト
     const span = end - start;
@@ -94,33 +105,51 @@
     const be = bs + breakMin;
 
     const thr = settings.overtime && settings.overtime.enabled ? Number(settings.overtime.thresholdHours) * 60 : Infinity;
-    let worked = 0, night = 0, ot = 0;
+    // 深夜だけ / 残業だけ / 深夜かつ残業 に分けて数える
+    let worked = 0, nightOnly = 0, otOnly = 0, both = 0;
     for (let m = start; m < end; m++) {
       if (m >= bs && m < be) continue;
       worked++;
-      if (priorWorkedMin + worked > thr) ot++;
-      if (isNightMinute(settings, m % DAY)) night++;
+      const isOt = priorWorkedMin + worked > thr;
+      const isNight = isNightMinute(settings, m % DAY);
+      if (isOt && isNight) both++;
+      else if (isOt) otOnly++;
+      else if (isNight) nightOnly++;
     }
 
     const wage = wageOf(settings, shift);
-    const nr = settings.night && settings.night.enabled ? Number(settings.night.rate) || 0 : 0;
-    const or = settings.overtime && settings.overtime.enabled ? Number(settings.overtime.rate) || 0 : 0;
-    // 深夜と残業が重なる時間は割増率を足し算（25%＋25%＝50%）
-    const pay = { base: (wage * worked) / 60, night: (wage * nr * night) / 60, overtime: (wage * or * ot) / 60 };
-    pay.total = pay.base + pay.night + pay.overtime;
-    return { workedMin: worked, nightMin: night, otMin: ot, breakMin, wage, pay, error: null };
+    const nOn = !!(settings.night && settings.night.enabled);
+    const oOn = !!(settings.overtime && settings.overtime.enabled);
+    const nr = nOn ? Number(settings.night.rate) || 0 : 0;
+    const or = oOn ? Number(settings.overtime.rate) || 0 : 0;
+    // 深夜かつ残業は専用の割増率（初期値 50% ＝ 時給の1.5倍）
+    const br = settings.nightOvertime && settings.nightOvertime.rate != null ? Number(settings.nightOvertime.rate) || 0 : nr + or;
+    const pay = {
+      base: (wage * worked) / 60,
+      night: (wage * nr * nightOnly) / 60,
+      overtime: (wage * or * otOnly) / 60,
+      nightOvertime: (wage * br * both) / 60,
+    };
+    pay.total = pay.base + pay.night + pay.overtime + pay.nightOvertime;
+    return {
+      workedMin: worked,
+      nightMin: nightOnly + both, // 深夜に働いた時間（残業と重なる分を含む）
+      otMin: otOnly + both, // 残業した時間（深夜と重なる分を含む）
+      nightOtMin: both,
+      breakMin, wage, pay, error: null,
+    };
   }
 
   /** 複数シフト（同じ日は残業判定を合算、交通費は 1 日 1 回） */
   function calcShifts(settings, shifts) {
     const sorted = shifts.slice().sort((a, b) => (a.date === b.date ? (toMin(a.start) || 0) - (toMin(b.start) || 0) : a.date < b.date ? -1 : 1));
     const workedByDate = {};
-    const daily = settings.transport && settings.transport.mode === 'daily' ? Number(settings.transport.daily) || 0 : 0;
+    const daily = settings.transport && settings.transport.mode === 'daily';
     return sorted.map((s) => {
       const result = calcShift(settings, s, workedByDate[s.date] || 0);
-      const first = !(s.date in workedByDate);
+      const first = !(s.date in workedByDate); // 交通費は 1 日 1 回（その日の最初のシフトの交通費）
       workedByDate[s.date] = (workedByDate[s.date] || 0) + result.workedMin;
-      return { shift: s, result, transport: first ? daily : 0 };
+      return { shift: s, result, transport: daily && first ? transportOf(settings, s) : 0 };
     });
   }
 
@@ -158,7 +187,7 @@
   function summarizePeriod(settings, shifts, closingYM) {
     const p = periodFor(settings, closingYM);
     const rows = calcShifts(settings, shifts.filter((s) => s.date >= p.from && s.date <= p.to));
-    const sum = { days: 0, workedMin: 0, nightMin: 0, otMin: 0, base: 0, night: 0, overtime: 0, transport: 0 };
+    const sum = { days: 0, workedMin: 0, nightMin: 0, otMin: 0, nightOtMin: 0, base: 0, night: 0, overtime: 0, nightOvertime: 0, transport: 0 };
     const dates = new Set();
     rows.forEach(({ shift, result, transport }) => {
       if (result.error) return;
@@ -166,15 +195,17 @@
       sum.workedMin += result.workedMin;
       sum.nightMin += result.nightMin;
       sum.otMin += result.otMin;
+      sum.nightOtMin += result.nightOtMin;
       sum.base += result.pay.base;
       sum.night += result.pay.night;
       sum.overtime += result.pay.overtime;
+      sum.nightOvertime += result.pay.nightOvertime;
       sum.transport += transport;
     });
     sum.days = dates.size;
     if (settings.transport && settings.transport.mode === 'monthly' && sum.days > 0) sum.transport += Number(settings.transport.monthly) || 0;
-    ['base', 'night', 'overtime', 'transport'].forEach((k) => (sum[k] = Math.round(sum[k])));
-    sum.salary = sum.base + sum.night + sum.overtime; // 交通費を除いた給与
+    ['base', 'night', 'overtime', 'nightOvertime', 'transport'].forEach((k) => (sum[k] = Math.round(sum[k])));
+    sum.salary = sum.base + sum.night + sum.overtime + sum.nightOvertime; // 交通費を除いた給与
     sum.total = sum.salary + sum.transport;
     return { closingYM, period: p, payDate: payDateFor(settings, closingYM), rows, sum };
   }
@@ -200,7 +231,7 @@
     const d = defaultSettings();
     const src = (data && data.settings) || {};
     const settings = Object.assign({}, d, src);
-    ['night', 'overtime', 'transport'].forEach((k) => (settings[k] = Object.assign({}, d[k], src[k] || {})));
+    ['night', 'overtime', 'nightOvertime', 'transport'].forEach((k) => (settings[k] = Object.assign({}, d[k], src[k] || {})));
     if (!Array.isArray(settings.walls)) settings.walls = d.walls;
     let shifts = data && Array.isArray(data.shifts) ? data.shifts.slice() : [];
 
@@ -216,15 +247,32 @@
     } else if (!Array.isArray(settings.wages) || !settings.wages.length) {
       settings.wages = d.wages;
     }
+    // 交通費：旧形式（1日あたりの金額 daily）→ 名前付きの交通費 1 件
+    const tr = settings.transport;
+    const srcT = src.transport || {};
+    if (!Array.isArray(srcT.options) || !srcT.options.length) {
+      tr.options = [{ id: 't1', name: '通常', amount: Number(srcT.daily) || 0 }];
+      if (srcT.daily != null) {
+        shifts = shifts.map((s) => Object.assign({}, s, {
+          transportId: 't1',
+          // 以前シフトごとに入れた交通費はそのまま、無ければ当時の1日あたりの金額
+          transport: s.transport != null && s.transport !== '' ? Number(s.transport) : Number(srcT.daily) || 0,
+        }));
+      }
+    }
+    delete tr.daily;
     // 使わなくなった項目を落とす
     delete settings.holiday;
     delete settings.rounding;
-    shifts = shifts.map((s) => ({ id: s.id, date: s.date, start: s.start, end: s.end, breakMin: Number(s.breakMin) || 0, wageId: s.wageId, hourly: s.hourly }));
+    shifts = shifts.map((s) => ({
+      id: s.id, date: s.date, start: s.start, end: s.end, breakMin: Number(s.breakMin) || 0,
+      wageId: s.wageId, hourly: s.hourly, transportId: s.transportId, transport: s.transport == null || s.transport === '' ? undefined : Number(s.transport),
+    }));
     return { settings, shifts };
   }
 
   return {
-    defaultSettings, toMin, addDays, dayOfWeek, wageOf, calcShift, calcShifts,
+    defaultSettings, toMin, addDays, dayOfWeek, wageOf, transportOf, calcShift, calcShifts,
     periodFor, closingMonthOf, payDateFor, summarizePeriod, summarizeYear, migrate,
   };
 });
