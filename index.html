@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f1115" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#f5f6f8" media="(prefers-color-scheme: light)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="給料計算">
+  <title>給料計算</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <h1>給料計算</h1>
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-tab="month" role="tab">月</button>
+      <button class="tab" data-tab="year" role="tab">年間</button>
+      <button class="tab" data-tab="settings" role="tab">設定</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- ===== 月 ===== -->
+    <section id="tab-month" class="panel active">
+      <div class="month-nav">
+        <button class="icon" id="prevMonth" aria-label="前の月">‹</button>
+        <div class="month-label">
+          <div id="monthTitle" class="title"></div>
+          <div id="monthSub" class="sub"></div>
+        </div>
+        <button class="icon" id="nextMonth" aria-label="次の月">›</button>
+      </div>
+
+      <div class="card total-card">
+        <div class="sub">支給見込み（交通費込み）</div>
+        <div id="sumTotal" class="big"></div>
+        <dl class="breakdown" id="sumBreakdown"></dl>
+      </div>
+
+      <div class="card">
+        <h2 id="formTitle">シフトを追加</h2>
+        <div id="templates" class="chips"></div>
+        <form id="shiftForm" autocomplete="off">
+          <input type="hidden" name="sid">
+          <div class="grid">
+            <label>日付<input type="date" name="date" required></label>
+            <label>出勤<input type="time" name="start" required></label>
+            <label>退勤<input type="time" name="end" required></label>
+            <label>休憩（分）<input type="number" name="breakMin" min="0" step="5" inputmode="numeric" value="0"></label>
+          </div>
+          <details>
+            <summary>くわしく</summary>
+            <div class="grid">
+              <label>休憩の開始<input type="time" name="breakStart"><small>空欄ならシフトの中ほどで計算</small></label>
+              <label>休日扱い
+                <select name="holiday">
+                  <option value="">設定どおり</option>
+                  <option value="1">休日にする</option>
+                  <option value="0">休日にしない</option>
+                </select>
+              </label>
+              <label>交通費（円）<input type="number" name="transport" min="0" inputmode="numeric" placeholder="設定どおり"></label>
+              <label class="wide">メモ<input type="text" name="memo" maxlength="100"></label>
+            </div>
+          </details>
+          <div id="preview" class="preview"></div>
+          <div class="actions">
+            <button type="submit" class="primary" id="saveBtn">追加</button>
+            <button type="button" id="saveTplBtn">テンプレートに保存</button>
+            <button type="button" id="cancelEdit" hidden>キャンセル</button>
+          </div>
+        </form>
+      </div>
+
+      <div class="card">
+        <h2>この期間のシフト</h2>
+        <ul id="shiftList" class="shift-list"></ul>
+      </div>
+    </section>
+
+    <!-- ===== 年間 ===== -->
+    <section id="tab-year" class="panel">
+      <div class="month-nav">
+        <button class="icon" id="prevYear" aria-label="前の年">‹</button>
+        <div class="month-label">
+          <div id="yearTitle" class="title"></div>
+          <div class="sub">支給日ベース（年収の壁はふつうこの数え方）</div>
+        </div>
+        <button class="icon" id="nextYear" aria-label="次の年">›</button>
+      </div>
+      <div class="card total-card">
+        <div class="sub">年間の給与（交通費を除く）</div>
+        <div id="yearSalary" class="big"></div>
+        <div class="sub" id="yearSub"></div>
+      </div>
+      <div class="card">
+        <h2>年収の壁</h2>
+        <div id="walls"></div>
+        <p class="note">金額は目安です。制度は毎年のように変わるので、設定で見直してください。</p>
+      </div>
+      <div class="card">
+        <h2>月別</h2>
+        <div id="yearBars" class="bars"></div>
+      </div>
+    </section>
+
+    <!-- ===== 設定 ===== -->
+    <section id="tab-settings" class="panel">
+      <form id="settingsForm" autocomplete="off">
+        <div class="card">
+          <h2>時給</h2>
+          <p class="note">時給が上がったら行を足してください。その日以降のシフトに新しい時給が使われます。</p>
+          <table class="wage-table">
+            <thead><tr><th>適用開始日</th><th>時給（円）</th><th></th></tr></thead>
+            <tbody id="wageRows"></tbody>
+          </table>
+          <button type="button" id="addWage">＋ 時給の改定を追加</button>
+        </div>
+
+        <div class="card">
+          <h2>割増</h2>
+          <div class="grid">
+            <label class="check"><input type="checkbox" name="night.enabled"> 深夜割増</label>
+            <label>開始<input type="time" name="night.start"></label>
+            <label>終了<input type="time" name="night.end"></label>
+            <label>割増率（%）<input type="number" name="night.ratePct" min="0" step="1" inputmode="numeric"></label>
+          </div>
+          <div class="grid">
+            <label class="check"><input type="checkbox" name="overtime.enabled"> 残業割増</label>
+            <label>1日の上限（時間）<input type="number" name="overtime.thresholdHours" min="1" step="0.5" inputmode="decimal"></label>
+            <label>割増率（%）<input type="number" name="overtime.ratePct" min="0" step="1" inputmode="numeric"></label>
+          </div>
+          <div class="grid">
+            <label>休日手当（円/時）<input type="number" name="holiday.addPerHour" min="0" inputmode="numeric"></label>
+            <label class="check"><input type="checkbox" name="holiday.weekendAuto"> 土日を自動で休日扱い</label>
+          </div>
+          <p class="note">深夜と残業が重なると割増率は足し算（25%＋25%＝50%）。休日手当は時給に上乗せし、割増の基礎にも含めます。</p>
+        </div>
+
+        <div class="card">
+          <h2>交通費</h2>
+          <div class="grid">
+            <label>支給方法
+              <select name="transport.mode">
+                <option value="daily">出勤日ごと</option>
+                <option value="monthly">月額（定期代など）</option>
+                <option value="none">なし</option>
+              </select>
+            </label>
+            <label>1日あたり（往復・円）<input type="number" name="transport.daily" min="0" inputmode="numeric"></label>
+            <label>月額（円）<input type="number" name="transport.monthly" min="0" inputmode="numeric"></label>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>締め日・支給日・丸め</h2>
+          <div class="grid">
+            <label>締め日
+              <select name="closingDay" id="closingDay"></select>
+            </label>
+            <label>支給月
+              <select name="payMonthOffset">
+                <option value="0">当月</option>
+                <option value="1">翌月</option>
+                <option value="2">翌々月</option>
+              </select>
+            </label>
+            <label>支給日（日）<input type="number" name="payDay" min="1" max="31" inputmode="numeric"></label>
+            <label>打刻の丸め
+              <select name="rounding.unit">
+                <option value="1">丸めない</option>
+                <option value="5">5分</option>
+                <option value="10">10分</option>
+                <option value="15">15分</option>
+                <option value="30">30分</option>
+              </select>
+            </label>
+          </div>
+          <p class="note">丸めは出勤を切り上げ・退勤を切り捨て。職場のルールに合わせて選んでください。</p>
+        </div>
+
+        <div class="card">
+          <h2>年収の壁</h2>
+          <table class="wage-table">
+            <thead><tr><th>名前</th><th>金額（円）</th><th>交通費込み</th><th></th></tr></thead>
+            <tbody id="wallRows"></tbody>
+          </table>
+          <button type="button" id="addWall">＋ 壁を追加</button>
+        </div>
+      </form>
+
+      <div class="card">
+        <h2>テンプレート</h2>
+        <ul id="tplList" class="shift-list"></ul>
+        <p class="note">シフト入力画面の「テンプレートに保存」で追加できます。</p>
+      </div>
+
+      <div class="card">
+        <h2>データ</h2>
+        <p class="note">データはこのブラウザの中だけに保存されます（サーバーには送りません）。機種変更の前などにバックアップしてください。</p>
+        <div class="actions wrap">
+          <button type="button" id="exportCsv">CSV書き出し（全シフト）</button>
+          <button type="button" id="exportJson">バックアップ（JSON）</button>
+          <label class="button">復元（JSON）<input type="file" id="importJson" accept="application/json,.json" hidden></label>
+          <button type="button" id="resetAll" class="danger">全部消す</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="calc.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

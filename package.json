@@ -1,0 +1,10 @@
+{
+  "name": "kyuryo-keisan",
+  "version": "1.0.0",
+  "private": true,
+  "description": "バイトの給料計算ツール（深夜・残業割増、交通費、締め日、年収の壁チェック）",
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "license": "MIT"
+}
