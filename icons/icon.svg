@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2f9bff"/>
+      <stop offset="1" stop-color="#0060df"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+  <!-- 円記号（¥）。文字フォントに頼らず線で描く -->
+  <g fill="none" stroke="#ffffff" stroke-width="92" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M332 262 L512 500 L692 262"/>
+    <path d="M512 500 L512 782"/>
+    <path d="M362 552 L662 552"/>
+    <path d="M362 672 L662 672"/>
+  </g>
+</svg>

@@ -392,4 +392,9 @@
 
   fillSettings();
   render();
+
+  // ホーム画面に追加したときにオフラインでも開けるように（file:// で開いたときは使わない）
+  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  }
 })();
