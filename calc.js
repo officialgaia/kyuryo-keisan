@@ -1,8 +1,8 @@
 /*
  * 給料計算ロジック（画面から独立。ブラウザでは window.Calc、Node では require で読み込める）
  *
- * 時刻は "HH:MM"、日付は "YYYY-MM-DD" の文字列で扱う。
- * 金額は円。端数は「期間の合計」で 1 円未満を四捨五入する。
+ * 時刻は "HH:MM"、日付は "YYYY-MM-DD" の文字列。金額は円。
+ * 端数は締め月の合計で 1 円未満を四捨五入する。
  */
 (function (root, factory) {
   const api = factory();
@@ -15,21 +15,15 @@
 
   function defaultSettings() {
     return {
-      // 時給の改定履歴（適用開始日が新しいものが優先）
-      wages: [{ from: '2026-01-01', hourly: 1200 }],
+      // 名前付きの時給。シフトごとに選ぶ
+      wages: [{ id: 'w1', name: '通常', hourly: 1200 }],
       night: { enabled: true, start: '22:00', end: '05:00', rate: 0.25 },
       overtime: { enabled: true, thresholdHours: 8, rate: 0.25 },
-      // 土日・休日手当（1 時間あたりの上乗せ円）。weekendAuto で土日を自動で休日扱い
-      holiday: { addPerHour: 0, weekendAuto: false },
-      // 交通費 mode: 'daily'（出勤日ごと） | 'monthly'（期間ごとの定額） | 'none'
+      // mode: 'daily'（出勤日ごと） | 'monthly'（定額） | 'none'
       transport: { mode: 'daily', daily: 0, monthly: 0 },
-      // 打刻の丸め（分）。出勤は切り上げ、退勤は切り捨て。1 なら丸めなし
-      rounding: { unit: 1 },
-      // 締め日（0 = 末日締め）。支払月のずれ（0 = 当月払い, 1 = 翌月払い）と支給日
-      closingDay: 0,
-      payMonthOffset: 1,
+      closingDay: 0, // 0 = 末日締め
+      payMonthOffset: 1, // 0 = 当月払い, 1 = 翌月払い
       payDay: 25,
-      // 年収の壁（目安。制度改正があるので画面から編集できる）
       walls: [
         { label: '扶養の目安（学生）', amount: 1500000, includeTransport: true },
         { label: '所得税がかかる目安', amount: 1780000, includeTransport: false },
@@ -39,15 +33,8 @@
 
   // ---------- 小物 ----------
   function toMin(hhmm) {
-    if (!hhmm) return null;
-    const m = /^(\d{1,2}):(\d{2})$/.exec(String(hhmm).trim());
-    if (!m) return null;
-    return Number(m[1]) * 60 + Number(m[2]);
-  }
-  function minToHHMM(min) {
-    const h = Math.floor(min / 60);
-    const m = Math.round(min % 60);
-    return h + ':' + String(m).padStart(2, '0');
+    const m = /^(\d{1,2}):(\d{2})$/.exec(String(hhmm || '').trim());
+    return m ? Number(m[1]) * 60 + Number(m[2]) : null;
   }
   function parseDate(s) {
     const [y, mo, d] = s.split('-').map(Number);
@@ -65,19 +52,19 @@
     return parseDate(s).getUTCDay(); // 0=日 … 6=土
   }
   function daysInMonth(y, m) {
-    return new Date(Date.UTC(y, m, 0)).getUTCDate(); // m は 1〜12
+    return new Date(Date.UTC(y, m, 0)).getUTCDate();
   }
   function shiftMonth(y, m, n) {
     const t = y * 12 + (m - 1) + n;
     return [Math.floor(t / 12), (t % 12) + 1];
   }
 
-  // その日に有効な時給
-  function wageFor(settings, date) {
-    const list = (settings.wages || []).filter((w) => w.from && w.from <= date).sort((a, b) => (a.from < b.from ? 1 : -1));
-    if (list.length) return Number(list[0].hourly) || 0;
-    const all = (settings.wages || []).slice().sort((a, b) => (a.from < b.from ? -1 : 1));
-    return all.length ? Number(all[0].hourly) || 0 : 0;
+  /** シフトの時給：保存時の時給 → 選んだ時給 → 最初の時給 */
+  function wageOf(settings, shift) {
+    if (shift.hourly != null && shift.hourly !== '' && !isNaN(Number(shift.hourly))) return Number(shift.hourly);
+    const list = settings.wages || [];
+    const w = list.find((x) => x.id === shift.wageId) || list[0];
+    return w ? Number(w.hourly) || 0 : 0;
   }
 
   function isNightMinute(settings, minuteOfDay) {
@@ -89,101 +76,55 @@
     return s < e ? minuteOfDay >= s && minuteOfDay < e : minuteOfDay >= s || minuteOfDay < e;
   }
 
-  function isHoliday(settings, shift) {
-    if (shift.holiday === true || shift.holiday === false) return shift.holiday;
-    if (settings.holiday && settings.holiday.weekendAuto) {
-      const dow = dayOfWeek(shift.date);
-      return dow === 0 || dow === 6;
-    }
-    return false;
-  }
-
   /**
-   * 1 シフト分の内訳を計算する。
-   * priorWorkedMin: 同じ日の前のシフトで既に働いた分（8 時間超の判定を日単位にするため）
+   * 1 シフト分の内訳。priorWorkedMin = 同じ日の前のシフトで働いた分（残業を日単位で判定するため）
+   * 休憩はシフトの中ほどに置いて計算する（深夜にかかるかどうかに影響するため）
    */
   function calcShift(settings, shift, priorWorkedMin) {
     priorWorkedMin = priorWorkedMin || 0;
-    const unit = Math.max(1, Number(settings.rounding && settings.rounding.unit) || 1);
     let start = toMin(shift.start);
     let end = toMin(shift.end);
-    const empty = { workedMin: 0, nightMin: 0, otMin: 0, nightOtMin: 0, breakMin: 0, wage: 0, rate: 0, holiday: false, pay: { base: 0, night: 0, overtime: 0, holiday: 0, total: 0 }, error: null };
+    const empty = { workedMin: 0, nightMin: 0, otMin: 0, breakMin: 0, wage: 0, pay: { base: 0, night: 0, overtime: 0, total: 0 } };
     if (start === null || end === null) return Object.assign(empty, { error: '時刻が正しくありません' });
-
-    start = Math.ceil(start / unit) * unit;
-    end = Math.floor(end / unit) * unit;
     if (end <= start) end += DAY; // 日付をまたぐシフト
     const span = end - start;
-    if (span <= 0) return Object.assign(empty, { error: '勤務時間が 0 分です' });
 
-    // 休憩区間。開始時刻が無いときはシフトの真ん中あたりに置く
     const breakMin = Math.min(Math.max(0, Number(shift.breakMin) || 0), span);
-    let bs = toMin(shift.breakStart);
-    if (bs === null) bs = start + Math.floor((span - breakMin) / 2);
-    else if (bs < start) bs += DAY;
-    bs = Math.min(Math.max(bs, start), end - breakMin);
+    const bs = start + Math.floor((span - breakMin) / 2);
     const be = bs + breakMin;
 
     const thr = settings.overtime && settings.overtime.enabled ? Number(settings.overtime.thresholdHours) * 60 : Infinity;
-    let worked = 0, night = 0, ot = 0, nightOt = 0;
+    let worked = 0, night = 0, ot = 0;
     for (let m = start; m < end; m++) {
       if (m >= bs && m < be) continue;
       worked++;
-      const isOt = priorWorkedMin + worked > thr;
-      const isNight = isNightMinute(settings, m % DAY);
-      if (isOt && isNight) nightOt++;
-      else if (isOt) ot++;
-      else if (isNight) night++;
+      if (priorWorkedMin + worked > thr) ot++;
+      if (isNightMinute(settings, m % DAY)) night++;
     }
 
-    const wage = wageFor(settings, shift.date);
-    const holiday = isHoliday(settings, shift);
-    const add = holiday ? Number(settings.holiday && settings.holiday.addPerHour) || 0 : 0;
-    const rate = wage + add; // 割増の基礎になる時給
+    const wage = wageOf(settings, shift);
     const nr = settings.night && settings.night.enabled ? Number(settings.night.rate) || 0 : 0;
     const or = settings.overtime && settings.overtime.enabled ? Number(settings.overtime.rate) || 0 : 0;
-
-    const pay = {
-      base: (wage * worked) / 60,
-      holiday: (add * worked) / 60,
-      night: (rate * nr * (night + nightOt)) / 60,
-      overtime: (rate * or * (ot + nightOt)) / 60,
-    };
-    pay.total = pay.base + pay.holiday + pay.night + pay.overtime;
-
-    return {
-      workedMin: worked,
-      nightMin: night + nightOt, // 深夜に働いた分（残業と重なる分も含む）
-      otMin: ot + nightOt, // 残業した分（深夜と重なる分も含む）
-      nightOtMin: nightOt,
-      breakMin,
-      wage,
-      rate,
-      holiday,
-      pay,
-      error: null,
-    };
+    // 深夜と残業が重なる時間は割増率を足し算（25%＋25%＝50%）
+    const pay = { base: (wage * worked) / 60, night: (wage * nr * night) / 60, overtime: (wage * or * ot) / 60 };
+    pay.total = pay.base + pay.night + pay.overtime;
+    return { workedMin: worked, nightMin: night, otMin: ot, breakMin, wage, pay, error: null };
   }
 
-  /** 複数シフトをまとめて計算（同じ日のシフトは残業判定を合算、交通費は 1 日 1 回） */
+  /** 複数シフト（同じ日は残業判定を合算、交通費は 1 日 1 回） */
   function calcShifts(settings, shifts) {
     const sorted = shifts.slice().sort((a, b) => (a.date === b.date ? (toMin(a.start) || 0) - (toMin(b.start) || 0) : a.date < b.date ? -1 : 1));
     const workedByDate = {};
-    const transportDone = {};
-    const tmode = (settings.transport && settings.transport.mode) || 'none';
+    const daily = settings.transport && settings.transport.mode === 'daily' ? Number(settings.transport.daily) || 0 : 0;
     return sorted.map((s) => {
-      const r = calcShift(settings, s, workedByDate[s.date] || 0);
-      workedByDate[s.date] = (workedByDate[s.date] || 0) + r.workedMin;
-      let transport = 0;
-      const override = s.transport === '' || s.transport === null || s.transport === undefined ? null : Number(s.transport);
-      if (override !== null && !isNaN(override)) transport = override;
-      else if (tmode === 'daily' && !transportDone[s.date]) transport = Number(settings.transport.daily) || 0;
-      if (override !== null || tmode === 'daily') transportDone[s.date] = true;
-      return { shift: s, result: r, transport };
+      const result = calcShift(settings, s, workedByDate[s.date] || 0);
+      const first = !(s.date in workedByDate);
+      workedByDate[s.date] = (workedByDate[s.date] || 0) + result.workedMin;
+      return { shift: s, result, transport: first ? daily : 0 };
     });
   }
 
-  /** 締め日に合わせた期間。closingYM = 'YYYY-MM'（締めが来る月） */
+  /** 締め日に合わせた期間。closingYM = 'YYYY-MM' */
   function periodFor(settings, closingYM) {
     const [y, m] = closingYM.split('-').map(Number);
     const cd = Number(settings.closingDay) || 0;
@@ -191,8 +132,7 @@
       return { from: fmtDate(new Date(Date.UTC(y, m - 1, 1))), to: fmtDate(new Date(Date.UTC(y, m - 1, daysInMonth(y, m)))) };
     }
     const [py, pm] = shiftMonth(y, m, -1);
-    const prevClose = Math.min(cd, daysInMonth(py, pm));
-    const from = addDays(fmtDate(new Date(Date.UTC(py, pm - 1, prevClose))), 1);
+    const from = addDays(fmtDate(new Date(Date.UTC(py, pm - 1, Math.min(cd, daysInMonth(py, pm))))), 1);
     const to = fmtDate(new Date(Date.UTC(y, m - 1, Math.min(cd, daysInMonth(y, m)))));
     return { from, to };
   }
@@ -217,9 +157,8 @@
   /** 締め月 1 か月分の集計 */
   function summarizePeriod(settings, shifts, closingYM) {
     const p = periodFor(settings, closingYM);
-    const inPeriod = shifts.filter((s) => s.date >= p.from && s.date <= p.to);
-    const rows = calcShifts(settings, inPeriod);
-    const sum = { days: 0, workedMin: 0, nightMin: 0, otMin: 0, base: 0, holiday: 0, night: 0, overtime: 0, transport: 0 };
+    const rows = calcShifts(settings, shifts.filter((s) => s.date >= p.from && s.date <= p.to));
+    const sum = { days: 0, workedMin: 0, nightMin: 0, otMin: 0, base: 0, night: 0, overtime: 0, transport: 0 };
     const dates = new Set();
     rows.forEach(({ shift, result, transport }) => {
       if (result.error) return;
@@ -228,21 +167,19 @@
       sum.nightMin += result.nightMin;
       sum.otMin += result.otMin;
       sum.base += result.pay.base;
-      sum.holiday += result.pay.holiday;
       sum.night += result.pay.night;
       sum.overtime += result.pay.overtime;
       sum.transport += transport;
     });
     sum.days = dates.size;
     if (settings.transport && settings.transport.mode === 'monthly' && sum.days > 0) sum.transport += Number(settings.transport.monthly) || 0;
-    // 端数処理は期間合計で 1 円未満四捨五入
-    ['base', 'holiday', 'night', 'overtime', 'transport'].forEach((k) => (sum[k] = Math.round(sum[k])));
-    sum.salary = sum.base + sum.holiday + sum.night + sum.overtime; // 交通費を除いた給与
+    ['base', 'night', 'overtime', 'transport'].forEach((k) => (sum[k] = Math.round(sum[k])));
+    sum.salary = sum.base + sum.night + sum.overtime; // 交通費を除いた給与
     sum.total = sum.salary + sum.transport;
     return { closingYM, period: p, payDate: payDateFor(settings, closingYM), rows, sum };
   }
 
-  /** 支給日ベースで 1 年分（1〜12 月支給分）の合計。年収の壁はふつう支給日で数える */
+  /** 支給日ベースで 1 年分（1〜12 月支給分） */
   function summarizeYear(settings, shifts, year) {
     const offset = Number(settings.payMonthOffset) || 0;
     const months = [];
@@ -255,20 +192,39 @@
     return { year, months, salary, transport, total: salary + transport };
   }
 
+  /**
+   * 保存データを今の形にそろえる（前のバージョンのデータも読めるように）
+   * 旧形式：wages = [{ from, hourly }]（改定履歴）、シフトに hourly なし
+   */
+  function migrate(data) {
+    const d = defaultSettings();
+    const src = (data && data.settings) || {};
+    const settings = Object.assign({}, d, src);
+    ['night', 'overtime', 'transport'].forEach((k) => (settings[k] = Object.assign({}, d[k], src[k] || {})));
+    if (!Array.isArray(settings.walls)) settings.walls = d.walls;
+    let shifts = data && Array.isArray(data.shifts) ? data.shifts.slice() : [];
+
+    const old = Array.isArray(src.wages) && src.wages.some((w) => w && w.from && !w.id);
+    if (old) {
+      const hist = src.wages.filter((w) => w.from).sort((a, b) => (a.from < b.from ? -1 : 1));
+      const at = (date) => {
+        const ok = hist.filter((w) => w.from <= date);
+        return Number((ok.length ? ok[ok.length - 1] : hist[0]).hourly) || 0;
+      };
+      settings.wages = [{ id: 'w1', name: '通常', hourly: Number(hist[hist.length - 1].hourly) || 0 }];
+      shifts = shifts.map((s) => Object.assign({}, s, { wageId: 'w1', hourly: s.hourly != null ? s.hourly : at(s.date) }));
+    } else if (!Array.isArray(settings.wages) || !settings.wages.length) {
+      settings.wages = d.wages;
+    }
+    // 使わなくなった項目を落とす
+    delete settings.holiday;
+    delete settings.rounding;
+    shifts = shifts.map((s) => ({ id: s.id, date: s.date, start: s.start, end: s.end, breakMin: Number(s.breakMin) || 0, wageId: s.wageId, hourly: s.hourly }));
+    return { settings, shifts };
+  }
+
   return {
-    defaultSettings,
-    toMin,
-    minToHHMM,
-    addDays,
-    dayOfWeek,
-    wageFor,
-    isNightMinute,
-    calcShift,
-    calcShifts,
-    periodFor,
-    closingMonthOf,
-    payDateFor,
-    summarizePeriod,
-    summarizeYear,
+    defaultSettings, toMin, addDays, dayOfWeek, wageOf, calcShift, calcShifts,
+    periodFor, closingMonthOf, payDateFor, summarizePeriod, summarizeYear, migrate,
   };
 });

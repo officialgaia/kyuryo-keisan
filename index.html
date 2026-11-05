@@ -12,92 +12,67 @@
 </head>
 <body>
   <main>
-    <!-- ===== 月 ===== -->
-    <section id="tab-month" class="panel active">
+    <!-- ===== 給料 ===== -->
+    <section id="tab-pay" class="panel active">
       <div class="nav">
-        <button class="arrow" id="prevMonth" aria-label="前の月">‹</button>
-        <div>
-          <div id="monthTitle" class="nav-title"></div>
-          <div id="monthSub" class="muted small"></div>
-        </div>
-        <button class="arrow" id="nextMonth" aria-label="次の月">›</button>
+        <button class="arrow" id="prev" aria-label="前の月">‹</button>
+        <div id="monthTitle" class="nav-title"></div>
+        <button class="arrow" id="next" aria-label="次の月">›</button>
       </div>
 
       <div class="hero">
-        <div id="sumTotal" class="big"></div>
-        <div id="sumSub" class="muted"></div>
+        <div id="total" class="big"></div>
+        <div id="totalSub" class="muted"></div>
       </div>
 
-      <details class="group" id="breakdownBox">
+      <details class="group">
         <summary>内訳</summary>
-        <dl id="sumBreakdown" class="rows"></dl>
+        <dl id="breakdown" class="rows"></dl>
       </details>
 
       <button class="add" id="openAdd">＋ シフトを追加</button>
-
       <ul id="shiftList" class="group list"></ul>
-    </section>
 
-    <!-- ===== 年間 ===== -->
-    <section id="tab-year" class="panel">
-      <div class="nav">
-        <button class="arrow" id="prevYear" aria-label="前の年">‹</button>
-        <div><div id="yearTitle" class="nav-title"></div></div>
-        <button class="arrow" id="nextYear" aria-label="次の年">›</button>
-      </div>
-      <div class="hero">
-        <div id="yearSalary" class="big"></div>
-        <div id="yearSub" class="muted"></div>
-      </div>
-      <div class="label">年収の壁</div>
-      <div id="walls" class="group pad"></div>
-      <div class="label">月別（支給月）</div>
-      <dl id="yearMonths" class="group rows"></dl>
+      <div class="label" id="yearLabel"></div>
+      <div id="yearBox" class="group"></div>
     </section>
 
     <!-- ===== 設定 ===== -->
     <section id="tab-settings" class="panel">
       <form id="settingsForm" autocomplete="off">
-        <div class="label">基本</div>
+        <div class="label">時給</div>
         <div class="group">
           <div id="wageRows"></div>
-          <button type="button" class="link" id="addWage">＋ 時給が変わったら追加</button>
-          <label class="row">交通費（1日・往復）<input type="number" name="transport.daily" min="0" inputmode="numeric"></label>
+          <button type="button" class="link" id="addWage">＋ 時給を追加</button>
+        </div>
+        <p class="hint">変えても、入力済みのシフトの金額は変わりません。</p>
+
+        <div class="group">
+          <label class="row">交通費（1日・往復）<span class="unit"><input type="number" name="transport.daily" min="0" inputmode="numeric">円</span></label>
         </div>
 
         <details class="group">
-          <summary>深夜・残業・休日</summary>
-          <label class="row"><span>深夜割増</span><input type="checkbox" name="night.enabled"></label>
-          <label class="row">深夜の時間帯<span class="pair"><input type="time" name="night.start">〜<input type="time" name="night.end"></span></label>
-          <label class="row">深夜の割増率（%）<input type="number" name="night.ratePct" min="0" inputmode="numeric"></label>
-          <label class="row"><span>残業割増</span><input type="checkbox" name="overtime.enabled"></label>
-          <label class="row">1日何時間から残業<input type="number" name="overtime.thresholdHours" min="1" step="0.5" inputmode="decimal"></label>
-          <label class="row">残業の割増率（%）<input type="number" name="overtime.ratePct" min="0" inputmode="numeric"></label>
-          <label class="row">休日手当（円/時）<input type="number" name="holiday.addPerHour" min="0" inputmode="numeric"></label>
-          <label class="row"><span>土日は休日扱い</span><input type="checkbox" name="holiday.weekendAuto"></label>
-        </details>
-
-        <details class="group">
-          <summary>交通費の出し方・締め日</summary>
-          <label class="row">交通費
+          <summary>詳しい設定</summary>
+          <label class="row">深夜割増<input type="checkbox" name="night.enabled"></label>
+          <label class="row">深夜の時間<span class="unit"><input type="time" name="night.start">〜<input type="time" name="night.end"></span></label>
+          <label class="row">深夜の割増率<span class="unit"><input type="number" name="night.ratePct" min="0" inputmode="numeric">%</span></label>
+          <label class="row">残業割増<input type="checkbox" name="overtime.enabled"></label>
+          <label class="row">残業になる時間<span class="unit">1日<input type="number" name="overtime.thresholdHours" min="1" step="0.5" inputmode="decimal">時間超</span></label>
+          <label class="row">残業の割増率<span class="unit"><input type="number" name="overtime.ratePct" min="0" inputmode="numeric">%</span></label>
+          <label class="row">交通費の出し方
             <select name="transport.mode">
               <option value="daily">出勤日ごと</option>
-              <option value="monthly">月額</option>
+              <option value="monthly">毎月定額</option>
               <option value="none">なし</option>
             </select>
           </label>
-          <label class="row">月額の場合（円）<input type="number" name="transport.monthly" min="0" inputmode="numeric"></label>
+          <label class="row">定額の場合<span class="unit"><input type="number" name="transport.monthly" min="0" inputmode="numeric">円</span></label>
           <label class="row">締め日<select name="closingDay" id="closingDay"></select></label>
-          <label class="row">支給
-            <span class="pair">
+          <label class="row">支給日
+            <span class="unit">
               <select name="payMonthOffset"><option value="0">当月</option><option value="1">翌月</option><option value="2">翌々月</option></select>
               <input type="number" name="payDay" min="1" max="31" inputmode="numeric" class="short">日
             </span>
-          </label>
-          <label class="row">時刻の丸め
-            <select name="rounding.unit">
-              <option value="1">しない</option><option value="5">5分</option><option value="10">10分</option><option value="15">15分</option><option value="30">30分</option>
-            </select>
           </label>
         </details>
 
@@ -109,56 +84,39 @@
       </form>
 
       <details class="group">
-        <summary>テンプレート</summary>
-        <ul id="tplList" class="list"></ul>
-      </details>
-
-      <details class="group">
         <summary>データ</summary>
         <button type="button" class="link" id="exportCsv">CSVで書き出す</button>
         <button type="button" class="link" id="exportJson">バックアップを保存</button>
         <label class="link">バックアップから戻す<input type="file" id="importJson" accept="application/json,.json" hidden></label>
         <button type="button" class="link danger" id="resetAll">すべて消す</button>
       </details>
-      <p class="muted small center">データはこのブラウザの中だけに保存されます。</p>
+      <p class="hint center">データはこのブラウザの中だけに保存されます。</p>
     </section>
   </main>
 
-  <!-- 下のタブ -->
   <nav class="tabbar">
-    <button class="tab active" data-tab="month">月</button>
-    <button class="tab" data-tab="year">年間</button>
+    <button class="tab active" data-tab="pay">給料</button>
     <button class="tab" data-tab="settings">設定</button>
   </nav>
 
   <!-- シフト入力 -->
   <dialog id="sheet">
-    <form id="shiftForm" method="dialog" autocomplete="off">
+    <form id="shiftForm" autocomplete="off">
       <div class="sheet-head">
         <button type="button" class="link" id="closeSheet">キャンセル</button>
-        <strong id="formTitle">シフトを追加</strong>
-        <button type="submit" class="link strong" id="saveBtn">保存</button>
+        <strong id="formTitle"></strong>
+        <button type="submit" class="link strong">保存</button>
       </div>
       <input type="hidden" name="sid">
-      <div id="templates" class="chips"></div>
+      <div id="wagePick" class="seg"></div>
       <div class="group">
         <label class="row">日付<input type="date" name="date" required></label>
         <label class="row">出勤<input type="time" name="start" required></label>
         <label class="row">退勤<input type="time" name="end" required></label>
-        <label class="row">休憩（分）<input type="number" name="breakMin" min="0" step="5" inputmode="numeric" value="0"></label>
+        <label class="row">休憩<span class="unit"><input type="number" name="breakMin" min="0" step="5" inputmode="numeric" value="0">分</span></label>
       </div>
       <div id="preview" class="preview"></div>
-      <details class="group">
-        <summary>その他</summary>
-        <label class="row">休憩の開始<input type="time" name="breakStart"></label>
-        <label class="row">休日扱い
-          <select name="holiday"><option value="">自動</option><option value="1">する</option><option value="0">しない</option></select>
-        </label>
-        <label class="row">交通費（円）<input type="number" name="transport" min="0" inputmode="numeric" placeholder="自動"></label>
-        <label class="row">メモ<input type="text" name="memo" maxlength="100"></label>
-        <button type="button" class="link" id="saveTplBtn">この時間をテンプレートに保存</button>
-      </details>
-      <button type="button" class="link danger center-block" id="deleteBtn" hidden>このシフトを削除</button>
+      <button type="button" class="link danger solo" id="deleteBtn" hidden>削除</button>
     </form>
   </dialog>
 
