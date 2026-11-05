@@ -6,6 +6,15 @@
   const WEEK = ['日', '月', '火', '水', '木', '金', '土'];
 
   // ---------- 保存 ----------
+  function mergeSettings(s) {
+    const d = C.defaultSettings();
+    if (!s) return d;
+    const out = Object.assign({}, d, s);
+    ['night', 'overtime', 'holiday', 'transport', 'rounding'].forEach((k) => (out[k] = Object.assign({}, d[k], s[k] || {})));
+    if (!Array.isArray(out.wages) || !out.wages.length) out.wages = d.wages;
+    if (!Array.isArray(out.walls)) out.walls = d.walls;
+    return out;
+  }
   function load() {
     try {
       const raw = localStorage.getItem(KEY);
@@ -16,19 +25,10 @@
     } catch (e) { /* 壊れていたら初期値 */ }
     return { settings: C.defaultSettings(), shifts: [], templates: [] };
   }
-  function mergeSettings(s) {
-    const d = C.defaultSettings();
-    if (!s) return d;
-    const out = Object.assign({}, d, s);
-    ['night', 'overtime', 'holiday', 'transport', 'rounding'].forEach((k) => (out[k] = Object.assign({}, d[k], s[k] || {})));
-    if (!Array.isArray(out.wages) || !out.wages.length) out.wages = d.wages;
-    if (!Array.isArray(out.walls)) out.walls = d.walls;
-    return out;
-  }
   let state = load();
   function save() {
     try { localStorage.setItem(KEY, JSON.stringify(state)); }
-    catch (e) { toast('保存できませんでした（ブラウザの設定を確認してください）'); }
+    catch (e) { toast('保存できませんでした'); }
   }
 
   // ---------- 小物 ----------
@@ -50,13 +50,13 @@
     const t = y * 12 + (m - 1) + n;
     return Math.floor(t / 12) + '-' + String((t % 12) + 1).padStart(2, '0');
   }
-  const mdw = (date) => { const [, m, d] = date.split('-').map(Number); return `${m}/${d}(${WEEK[C.dayOfWeek(date)]})`; };
+  const md = (date) => { const [, m, d] = date.split('-').map(Number); return `${m}/${d}`; };
   let toastTimer;
   function toast(msg) {
     const t = $('#toast');
     t.textContent = msg; t.hidden = false;
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => (t.hidden = true), 2200);
+    toastTimer = setTimeout(() => (t.hidden = true), 1800);
   }
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
@@ -75,79 +75,83 @@
   $('#nextMonth').addEventListener('click', () => { curYM = ymAdd(curYM, 1); renderMonth(); });
 
   function renderMonth() {
-    const s = state.settings;
-    const sum = C.summarizePeriod(s, state.shifts, curYM);
+    const sum = C.summarizePeriod(state.settings, state.shifts, curYM);
     const [y, m] = curYM.split('-').map(Number);
-    $('#monthTitle').textContent = `${y}年${m}月分`;
-    $('#monthSub').textContent = `${mdw(sum.period.from)}〜${mdw(sum.period.to)}　支給日 ${mdw(sum.payDate)}`;
+    const thisYear = Number(today().slice(0, 4));
+    $('#monthTitle').textContent = (y === thisYear ? '' : y + '年') + m + '月分';
+    $('#monthSub').textContent = md(sum.payDate) + ' 支給';
     const t = sum.sum;
     $('#sumTotal').textContent = yen(t.total);
-    const rows = [
-      ['勤務', `${t.days}日・${hours(t.workedMin)}`],
-      ['基本給', yen(t.base)],
-    ];
-    if (t.night) rows.push([`深夜手当（${hours(t.nightMin)}）`, yen(t.night)]);
-    if (t.overtime) rows.push([`残業手当（${hours(t.otMin)}）`, yen(t.overtime)]);
-    if (t.holiday) rows.push(['休日手当', yen(t.holiday)]);
-    rows.push(['sep']);
-    rows.push(['給与（交通費を除く）', yen(t.salary)]);
-    rows.push(['交通費', yen(t.transport)]);
-    $('#sumBreakdown').innerHTML = rows.map((r) => (r[0] === 'sep' ? '<div class="sep"></div>' : `<dt>${esc(r[0])}</dt><dd>${esc(r[1])}</dd>`)).join('');
+    $('#sumSub').textContent = t.days ? `${t.days}日 ・ ${hours(t.workedMin)}` : 'シフトなし';
 
-    const list = $('#shiftList');
-    if (!sum.rows.length) {
-      list.innerHTML = '<li class="empty">まだシフトがありません</li>';
-    } else {
-      list.innerHTML = sum.rows.map(({ shift, result: r, transport }) => {
-        const dow = C.dayOfWeek(shift.date);
-        const [, , d] = shift.date.split('-').map(Number);
-        const badges = (r.nightMin ? '<span class="badge night">深夜</span>' : '') + (r.otMin ? '<span class="badge ot">残業</span>' : '') + (r.holiday ? '<span class="badge hol">休日</span>' : '');
-        const sub = [hours(r.workedMin), shift.breakMin ? `休憩${shift.breakMin}分` : '', `時給${r.wage.toLocaleString()}円`, shift.memo || ''].filter(Boolean).join(' ・ ');
-        return `<li data-id="${esc(shift.id)}">
-          <div class="shift-date"><div class="d">${d}</div><div class="w ${dow === 6 ? 'sat' : dow === 0 ? 'sun' : ''}">${WEEK[dow]}</div></div>
-          <div class="shift-main" data-act="edit"><div class="t">${esc(shift.start)}〜${esc(shift.end)}${badges}</div><div class="m">${r.error ? esc(r.error) : esc(sub)}</div></div>
-          <div class="shift-pay">${yen(r.pay.total)}<div class="m">${transport ? '交通費' + yen(transport) : ''}</div></div>
-          <button class="del" data-act="del" aria-label="削除">×</button>
+    const rows = [['基本給', t.base]];
+    if (t.night) rows.push(['深夜手当', t.night]);
+    if (t.overtime) rows.push(['残業手当', t.overtime]);
+    if (t.holiday) rows.push(['休日手当', t.holiday]);
+    rows.push(['交通費', t.transport]);
+    $('#sumBreakdown').innerHTML = rows.map((r) => `<dt>${r[0]}</dt><dd>${yen(r[1])}</dd>`).join('') +
+      `<dt class="total">合計</dt><dd class="total">${yen(t.total)}</dd>`;
+
+    $('#shiftList').innerHTML = sum.rows.length
+      ? sum.rows.map(({ shift: s, result: r }) => {
+        const [, , d] = s.date.split('-').map(Number);
+        const extra = r.nightMin || r.otMin || r.holiday;
+        return `<li data-id="${esc(s.id)}">
+          <span class="day">${d}<span class="w">${WEEK[C.dayOfWeek(s.date)]}</span></span>
+          <span class="time">${esc(s.start)}–${esc(s.end)}${extra ? '<span class="dot" title="割増あり"></span>' : ''}</span>
+          <span class="pay">${r.error ? '—' : yen(r.pay.total)}</span>
         </li>`;
-      }).join('');
-    }
-    renderTemplates();
+      }).join('')
+      : '<li class="empty">シフトはまだありません</li>';
   }
-
   $('#shiftList').addEventListener('click', (e) => {
     const li = e.target.closest('li[data-id]');
-    if (!li) return;
-    const act = e.target.closest('[data-act]');
-    if (!act) return;
-    const id = li.dataset.id;
-    if (act.dataset.act === 'del') {
-      const sh = state.shifts.find((x) => x.id === id);
-      if (sh && confirm(`${mdw(sh.date)} ${sh.start}〜${sh.end} を削除しますか？`)) {
-        state.shifts = state.shifts.filter((x) => x.id !== id);
-        save(); renderMonth(); toast('削除しました');
-        if (form.sid.value === id) resetForm();
-      }
-    } else if (act.dataset.act === 'edit') {
-      editShift(id);
-    }
+    if (li) openSheet(li.dataset.id);
   });
 
-  // ---------- シフト入力 ----------
+  // ---------- シフト入力シート ----------
+  const sheet = $('#sheet');
   const form = $('#shiftForm');
-  function resetForm(keepDate) {
-    const date = keepDate ? form.date.value : defaultDate();
+  let lastTimes = null; // 直前に保存した時刻（次の入力に使う）
+
+  function openSheet(id) {
     form.reset();
-    form.sid.value = '';
-    form.date.value = date;
-    form.breakMin.value = 0;
-    $('#formTitle').textContent = 'シフトを追加';
-    $('#saveBtn').textContent = '追加';
-    $('#cancelEdit').hidden = true;
+    $('details', form).open = false;
+    const s = id && state.shifts.find((x) => x.id === id);
+    if (s) {
+      form.sid.value = s.id;
+      form.date.value = s.date;
+      form.start.value = s.start;
+      form.end.value = s.end;
+      form.breakMin.value = s.breakMin || 0;
+      form.breakStart.value = s.breakStart || '';
+      form.holiday.value = s.holiday === true ? '1' : s.holiday === false ? '0' : '';
+      form.transport.value = s.transport == null ? '' : s.transport;
+      form.memo.value = s.memo || '';
+      if (s.breakStart || s.holiday != null || s.transport != null || s.memo) $('details', form).open = true;
+      $('#formTitle').textContent = 'シフトを編集';
+      $('#deleteBtn').hidden = false;
+    } else {
+      form.sid.value = '';
+      form.date.value = nextDate();
+      if (lastTimes) { form.start.value = lastTimes.start; form.end.value = lastTimes.end; }
+      form.breakMin.value = lastTimes ? lastTimes.breakMin : 0;
+      $('#formTitle').textContent = 'シフトを追加';
+      $('#deleteBtn').hidden = true;
+    }
+    renderTemplates();
     updatePreview();
+    sheet.showModal();
   }
-  function defaultDate() {
+  function nextDate() {
     const p = C.periodFor(state.settings, curYM);
     const t = today();
+    if (t >= p.from && t <= p.to && !state.shifts.some((s) => s.date === t)) return t;
+    const inPeriod = state.shifts.filter((s) => s.date >= p.from && s.date <= p.to).map((s) => s.date).sort();
+    if (inPeriod.length) {
+      const n = C.addDays(inPeriod[inPeriod.length - 1], 1);
+      if (n <= p.to) return n;
+    }
     return t >= p.from && t <= p.to ? t : p.from;
   }
   function readForm() {
@@ -164,86 +168,67 @@
       memo: f.memo.value.trim(),
     };
   }
-  function editShift(id) {
-    const s = state.shifts.find((x) => x.id === id);
-    if (!s) return;
-    form.sid.value = s.id;
-    form.date.value = s.date;
-    form.start.value = s.start;
-    form.end.value = s.end;
-    form.breakMin.value = s.breakMin || 0;
-    form.breakStart.value = s.breakStart || '';
-    form.holiday.value = s.holiday === true ? '1' : s.holiday === false ? '0' : '';
-    form.transport.value = s.transport == null ? '' : s.transport;
-    form.memo.value = s.memo || '';
-    if (s.breakStart || s.holiday != null || s.transport != null || s.memo) $('details', form).open = true;
-    $('#formTitle').textContent = 'シフトを編集';
-    $('#saveBtn').textContent = '保存';
-    $('#cancelEdit').hidden = false;
-    updatePreview();
-    form.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  }
   function updatePreview() {
     const sh = readForm();
     const el = $('#preview');
-    if (!sh.date || !sh.start || !sh.end) { el.textContent = ''; return; }
+    if (!sh.date || !sh.start || !sh.end) { el.innerHTML = ''; return; }
     const others = state.shifts.filter((x) => x.id !== sh.id && x.date === sh.date && (C.toMin(x.start) || 0) < (C.toMin(sh.start) || 0));
     const prior = C.calcShifts(state.settings, others).reduce((a, r) => a + r.result.workedMin, 0);
     const r = C.calcShift(state.settings, sh, prior);
     if (r.error) { el.textContent = r.error; return; }
-    const parts = [`実働 ${hours(r.workedMin)}`];
-    if (r.nightMin) parts.push(`深夜 ${hours(r.nightMin)}`);
-    if (r.otMin) parts.push(`残業 ${hours(r.otMin)}`);
+    const parts = [hours(r.workedMin)];
+    if (r.nightMin) parts.push(`深夜${hours(r.nightMin)}`);
+    if (r.otMin) parts.push(`残業${hours(r.otMin)}`);
     if (r.holiday) parts.push('休日');
-    let warn = '';
-    // 労基法34条：6時間超は45分、8時間超は60分の休憩が必要
+    // 労基法34条：6時間超は45分、8時間超は60分の休憩
     const span = r.workedMin + r.breakMin;
-    if (span > 480 && r.breakMin < 60) warn = '（8時間を超える勤務は休憩60分以上が必要です）';
-    else if (span > 360 && r.breakMin < 45) warn = '（6時間を超える勤務は休憩45分以上が必要です）';
-    el.innerHTML = `<strong>${yen(r.pay.total)}</strong>　${esc(parts.join(' ・ '))}${warn ? '<br>' + esc(warn) : ''}`;
+    let warn = '';
+    if (span > 480 && r.breakMin < 60) warn = '8時間を超えるときは休憩60分以上が必要です';
+    else if (span > 360 && r.breakMin < 45) warn = '6時間を超えるときは休憩45分以上が必要です';
+    el.innerHTML = `<strong>${yen(r.pay.total)}</strong><span class="muted small">${esc(parts.join(' ・ '))}</span>${warn ? `<div class="warn">${esc(warn)}</div>` : ''}`;
   }
   form.addEventListener('input', updatePreview);
   form.addEventListener('submit', (e) => {
     e.preventDefault();
     const sh = readForm();
-    if (!sh.date || !sh.start || !sh.end) return;
+    if (!sh.date || !sh.start || !sh.end) { toast('日付と時間を入れてください'); return; }
     const i = state.shifts.findIndex((x) => x.id === sh.id);
     if (i >= 0) state.shifts[i] = sh; else state.shifts.push(sh);
+    lastTimes = { start: sh.start, end: sh.end, breakMin: sh.breakMin };
     save();
-    const ym = C.closingMonthOf(state.settings, sh.date);
-    toast(i >= 0 ? '保存しました' : '追加しました');
-    if (ym !== curYM) curYM = ym;
-    // 次の入力は翌日から
-    const next = C.addDays(sh.date, 1);
+    curYM = C.closingMonthOf(state.settings, sh.date);
+    sheet.close();
     renderMonth();
-    resetForm();
-    if (i < 0) {
-      form.date.value = next;
-      form.start.value = sh.start; form.end.value = sh.end; form.breakMin.value = sh.breakMin;
-      updatePreview();
-    }
+    toast(i >= 0 ? '保存しました' : '追加しました');
   });
-  $('#cancelEdit').addEventListener('click', () => resetForm());
+  $('#closeSheet').addEventListener('click', () => sheet.close());
+  sheet.addEventListener('click', (e) => { if (e.target === sheet) sheet.close(); }); // 外側タップで閉じる
+  $('#deleteBtn').addEventListener('click', () => {
+    const id = form.sid.value;
+    if (!id || !confirm('このシフトを削除しますか？')) return;
+    state.shifts = state.shifts.filter((x) => x.id !== id);
+    save(); sheet.close(); renderMonth(); toast('削除しました');
+  });
+  $('#openAdd').addEventListener('click', () => openSheet(null));
 
   // ---------- テンプレート ----------
   $('#saveTplBtn').addEventListener('click', () => {
     const sh = readForm();
     if (!sh.start || !sh.end) { toast('出勤・退勤を入れてください'); return; }
-    const name = prompt('テンプレートの名前', `${sh.start}〜${sh.end}`);
+    const name = prompt('テンプレートの名前', `${sh.start}–${sh.end}`);
     if (!name) return;
     state.templates.push({ id: uid(), name: name.slice(0, 20), start: sh.start, end: sh.end, breakMin: sh.breakMin, breakStart: sh.breakStart });
-    save(); renderTemplates(); toast('テンプレートに保存しました');
+    save(); renderTemplates(); toast('保存しました');
   });
   function renderTemplates() {
     $('#templates').innerHTML = state.templates.map((t) => `<button type="button" class="chip" data-tpl="${esc(t.id)}">${esc(t.name)}</button>`).join('');
     $('#tplList').innerHTML = state.templates.length
-      ? state.templates.map((t) => `<li data-tpl="${esc(t.id)}"><div class="shift-main"><div class="t">${esc(t.name)}</div><div class="m">${esc(t.start)}〜${esc(t.end)}${t.breakMin ? ' ・ 休憩' + t.breakMin + '分' : ''}</div></div><button class="del" data-act="deltpl" aria-label="削除">×</button></li>`).join('')
-      : '<li class="empty">まだありません</li>';
+      ? state.templates.map((t) => `<li data-tpl="${esc(t.id)}"><span class="time" style="color:var(--text)">${esc(t.name)}</span><span class="muted small">${esc(t.start)}–${esc(t.end)}</span><button class="del" data-act="deltpl" aria-label="削除">×</button></li>`).join('')
+      : '<li class="empty">シフト入力の「その他」から保存できます</li>';
   }
   $('#templates').addEventListener('click', (e) => {
     const b = e.target.closest('[data-tpl]');
-    if (!b) return;
-    const t = state.templates.find((x) => x.id === b.dataset.tpl);
+    const t = b && state.templates.find((x) => x.id === b.dataset.tpl);
     if (!t) return;
     form.start.value = t.start; form.end.value = t.end;
     form.breakMin.value = t.breakMin || 0; form.breakStart.value = t.breakStart || '';
@@ -264,7 +249,7 @@
   function renderYear() {
     const s = state.settings;
     const y = C.summarizeYear(s, state.shifts, curYear);
-    $('#yearTitle').textContent = `${curYear}年（1〜12月支給分）`;
+    $('#yearTitle').textContent = `${curYear}年`;
     $('#yearSalary').textContent = yen(y.salary);
 
     // 見込み：まだシフトが無い先の月を、入力済みの月の平均で埋める
@@ -275,36 +260,32 @@
     const emptyFuture = y.months.filter((m) => m.sum.salary === 0 && m.payDate > t).length;
     const projSalary = y.salary + avgSalary * emptyFuture;
     const projTotal = y.total + (avgSalary + avgTrans) * emptyFuture;
-    $('#yearSub').textContent = `交通費 ${yen(y.transport)}　／　このペースだと年間 約${man(projSalary)}`;
+    $('#yearSub').textContent = y.salary ? `交通費を除く ・ このペースで年 約${man(projSalary)}` : '交通費を除く';
 
     $('#walls').innerHTML = (s.walls || []).length ? s.walls.map((w) => {
       const amt = Number(w.amount) || 0;
       const cur = w.includeTransport ? y.total : y.salary;
       const proj = w.includeTransport ? projTotal : projSalary;
       const pct = amt ? Math.min(100, (cur / amt) * 100) : 0;
-      const ppct = amt ? Math.min(100, (proj / amt) * 100) : 0;
-      const left = amt - cur;
       const over = cur > amt;
-      const projOver = !over && proj > amt;
+      let note = over ? `<b>${yen(cur - amt)}</b> 超えています` : `あと <b>${yen(amt - cur)}</b>`;
+      if (!over && proj > amt) note += '（このペースだと超えそう）';
       return `<div class="wall">
-        <div class="wall-head"><span>${esc(w.label)}</span><span>${man(amt)}</span></div>
-        <div class="meter ${over ? 'over' : ''}"><span class="proj" style="width:${ppct}%"></span><span style="width:${pct}%"></span></div>
-        <div class="sub">${over ? `<b>${yen(-left)} 超えています</b>` : `あと <b>${yen(left)}</b>`}${w.includeTransport ? '（交通費込み）' : '（交通費を除く）'}${projOver ? '　⚠ このペースだと超えそう' : ''}</div>
+        <div class="wall-head"><span>${esc(w.label)}</span><span class="muted">${man(amt)}</span></div>
+        <div class="meter ${over ? 'over' : ''}"><span style="width:${pct}%"></span></div>
+        <div class="small muted">${note}</div>
       </div>`;
-    }).join('') : '<p class="note">設定から追加できます。</p>';
+    }).join('') : '<div class="wall muted small">設定から追加できます</div>';
 
-    const max = Math.max(1, ...y.months.map((m) => m.sum.total));
-    $('#yearBars').innerHTML = y.months.map((m, i) => {
-      const h = (m.sum.total / max) * 100;
-      const v = m.sum.total ? Math.round(m.sum.total / 1000) + 'k' : '';
-      return `<div class="bar ${m.payDate > t ? 'future' : ''}" title="${i + 1}月支給 ${yen(m.sum.total)}"><div class="v">${v}</div><span style="height:${h}%"></span><small>${i + 1}</small></div>`;
-    }).join('');
+    const months = y.months.map((m, i) => [i + 1, m]).filter(([, m]) => m.sum.total > 0);
+    $('#yearMonths').innerHTML = months.length
+      ? months.map(([i, m]) => `<dt>${i}月</dt><dd>${yen(m.sum.salary)}</dd>`).join('')
+      : '<dt class="muted">まだありません</dt><dd></dd>';
   }
 
   // ---------- 設定 ----------
   const sf = $('#settingsForm');
-  const cd = $('#closingDay');
-  cd.innerHTML = '<option value="0">末日</option>' + Array.from({ length: 30 }, (_, i) => `<option value="${i + 1}">${i + 1}日</option>`).join('');
+  $('#closingDay').innerHTML = '<option value="0">末日</option>' + Array.from({ length: 30 }, (_, i) => `<option value="${i + 1}">${i + 1}日</option>`).join('');
 
   function fillSettings() {
     const s = state.settings;
@@ -319,59 +300,64 @@
   function renderWageRows() {
     const rows = state.settings.wages.slice().sort((a, b) => (a.from < b.from ? -1 : 1));
     state.settings.wages = rows;
-    $('#wageRows').innerHTML = rows.map((w, i) => `<tr data-i="${i}">
-      <td><input type="date" data-k="from" value="${esc(w.from)}"></td>
-      <td><input type="number" data-k="hourly" min="0" inputmode="numeric" value="${esc(w.hourly)}"></td>
-      <td>${rows.length > 1 ? '<button type="button" class="del" data-act="delwage" aria-label="削除">×</button>' : ''}</td></tr>`).join('');
+    if (rows.length === 1) {
+      $('#wageRows').innerHTML = `<label class="row" data-i="0">時給（円）<input type="number" data-k="hourly" min="0" inputmode="numeric" value="${esc(rows[0].hourly)}"></label>`;
+      return;
+    }
+    $('#wageRows').innerHTML = rows.map((w, i) => `<div class="row" data-i="${i}">
+      <span class="pair">${i === 0 ? '<span>最初の時給</span>' : `<input type="date" data-k="from" value="${esc(w.from)}">から`}</span>
+      <span class="pair"><input type="number" data-k="hourly" min="0" inputmode="numeric" value="${esc(w.hourly)}" style="width:70px">円
+      ${i > 0 ? '<button type="button" class="del" data-act="delwage" aria-label="削除">×</button>' : ''}</span>
+    </div>`).join('');
   }
   function renderWallRows() {
-    $('#wallRows').innerHTML = state.settings.walls.map((w, i) => `<tr data-i="${i}">
-      <td><input type="text" data-k="label" value="${esc(w.label)}"></td>
-      <td><input type="number" data-k="amount" min="0" step="10000" inputmode="numeric" value="${esc(w.amount)}"></td>
-      <td><input type="checkbox" data-k="includeTransport" ${w.includeTransport ? 'checked' : ''}></td>
-      <td><button type="button" class="del" data-act="delwall" aria-label="削除">×</button></td></tr>`).join('');
+    $('#wallRows').innerHTML = state.settings.walls.map((w, i) => `<div class="row" data-i="${i}">
+      <input type="text" data-k="label" value="${esc(w.label)}" style="text-align:left;flex:1;width:auto">
+      <span class="pair"><input type="number" data-k="amount" min="0" step="10000" inputmode="numeric" value="${esc(w.amount)}" style="width:84px">円
+      <button type="button" class="del" data-act="delwall" aria-label="削除">×</button></span>
+    </div>`).join('') + '<p class="muted small" style="margin:0;padding:8px 16px 12px">金額は目安です。制度が変わったら直してください。</p>';
   }
   function readSettings() {
     const s = state.settings;
     const g = (n) => sf.elements[n];
-    const num = (n, d) => { const v = Number(g(n).value); return isNaN(v) || g(n).value === '' ? d : v; };
+    const num = (n, d) => { const v = Number(g(n).value); return g(n).value === '' || isNaN(v) ? d : v; };
     s.night = { enabled: g('night.enabled').checked, start: g('night.start').value || '22:00', end: g('night.end').value || '05:00', rate: num('night.ratePct', 25) / 100 };
     s.overtime = { enabled: g('overtime.enabled').checked, thresholdHours: num('overtime.thresholdHours', 8), rate: num('overtime.ratePct', 25) / 100 };
     s.holiday = { addPerHour: num('holiday.addPerHour', 0), weekendAuto: g('holiday.weekendAuto').checked };
     s.transport = { mode: g('transport.mode').value, daily: num('transport.daily', 0), monthly: num('transport.monthly', 0) };
     s.closingDay = num('closingDay', 0); s.payMonthOffset = num('payMonthOffset', 1); s.payDay = num('payDay', 25);
     s.rounding = { unit: num('rounding.unit', 1) };
-    $$('#wageRows tr').forEach((tr) => {
-      const w = s.wages[Number(tr.dataset.i)];
+    $$('#wageRows [data-i]').forEach((row) => {
+      const w = s.wages[Number(row.dataset.i)];
       if (!w) return;
-      w.from = $('[data-k=from]', tr).value || w.from;
-      w.hourly = Number($('[data-k=hourly]', tr).value) || 0;
+      const from = $('[data-k=from]', row);
+      if (from && from.value) w.from = from.value;
+      w.hourly = Number($('[data-k=hourly]', row).value) || 0;
     });
-    $$('#wallRows tr').forEach((tr) => {
-      const w = s.walls[Number(tr.dataset.i)];
+    $$('#wallRows [data-i]').forEach((row) => {
+      const w = s.walls[Number(row.dataset.i)];
       if (!w) return;
-      w.label = $('[data-k=label]', tr).value;
-      w.amount = Number($('[data-k=amount]', tr).value) || 0;
-      w.includeTransport = $('[data-k=includeTransport]', tr).checked;
+      w.label = $('[data-k=label]', row).value;
+      w.amount = Number($('[data-k=amount]', row).value) || 0;
     });
   }
   sf.addEventListener('change', (e) => {
     readSettings();
     if (e.target.dataset.k === 'from') renderWageRows();
     save();
-    toast('設定を保存しました');
   });
   sf.addEventListener('submit', (e) => e.preventDefault());
   $('#addWage').addEventListener('click', () => {
     readSettings();
     const last = state.settings.wages[state.settings.wages.length - 1];
+    if (state.settings.wages.length === 1) last.from = '2000-01-01';
     state.settings.wages.push({ from: today(), hourly: last ? last.hourly : 1200 });
     save(); renderWageRows();
   });
   $('#wageRows').addEventListener('click', (e) => {
     if (!e.target.closest('[data-act=delwage]')) return;
     readSettings();
-    state.settings.wages.splice(Number(e.target.closest('tr').dataset.i), 1);
+    state.settings.wages.splice(Number(e.target.closest('[data-i]').dataset.i), 1);
     save(); renderWageRows();
   });
   $('#addWall').addEventListener('click', () => {
@@ -382,7 +368,7 @@
   $('#wallRows').addEventListener('click', (e) => {
     if (!e.target.closest('[data-act=delwall]')) return;
     readSettings();
-    state.settings.walls.splice(Number(e.target.closest('tr').dataset.i), 1);
+    state.settings.walls.splice(Number(e.target.closest('[data-i]').dataset.i), 1);
     save(); renderWallRows();
   });
 
@@ -419,7 +405,7 @@
         if (!Array.isArray(d.shifts)) throw new Error();
         if (!confirm(`シフト${d.shifts.length}件のバックアップで上書きしますか？`)) return;
         state = { settings: mergeSettings(d.settings), shifts: d.shifts, templates: Array.isArray(d.templates) ? d.templates : [] };
-        save(); fillSettings(); renderMonth(); toast('復元しました');
+        save(); fillSettings(); renderTemplates(); renderMonth(); toast('戻しました');
       } catch (err) { toast('このファイルは読み込めませんでした'); }
       e.target.value = '';
     };
@@ -428,11 +414,11 @@
   $('#resetAll').addEventListener('click', () => {
     if (!confirm('シフトと設定をすべて消します。よろしいですか？')) return;
     state = { settings: C.defaultSettings(), shifts: [], templates: [] };
-    save(); fillSettings(); renderMonth(); resetForm(); toast('消しました');
+    save(); fillSettings(); renderTemplates(); renderMonth(); toast('消しました');
   });
 
   // ---------- 起動 ----------
   fillSettings();
+  renderTemplates();
   renderMonth();
-  resetForm();
 })();

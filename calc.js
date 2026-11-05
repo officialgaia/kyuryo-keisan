@@ -31,8 +31,8 @@
       payDay: 25,
       // 年収の壁（目安。制度改正があるので画面から編集できる）
       walls: [
-        { label: '学生の親の扶養・健康保険の扶養の目安（19〜22歳）', amount: 1500000, includeTransport: true },
-        { label: '所得税がかかり始める目安（2026年分〜）', amount: 1780000, includeTransport: false },
+        { label: '扶養の目安（学生）', amount: 1500000, includeTransport: true },
+        { label: '所得税がかかる目安', amount: 1780000, includeTransport: false },
       ],
     };
   }
