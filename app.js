@@ -80,6 +80,7 @@
     const t = sum.sum;
     $('#total').textContent = yen(t.total);
     $('#totalSub').textContent = (t.days ? `${t.days}日・${hours(t.workedMin)}・` : '') + `${md(sum.payDate)}支給`;
+    const live = renderLive(sum);
 
     const rows = [['基本給', t.base]];
     if (t.night) rows.push(['深夜手当', t.night]);
@@ -96,7 +97,7 @@
         const w = showWage ? s.wages.find((x) => x.id === sh.wageId) : null;
         const tr = showTrans ? s.transport.options.find((x) => x.id === sh.transportId) : null;
         const tags = [w && w.name, tr && tr.name].filter(Boolean).join('・');
-        return `<li data-id="${esc(sh.id)}">
+        return `<li data-id="${esc(sh.id)}"${live && live.current && live.current.shift.id === sh.id ? ' class="now"' : ''}>
           <span class="day">${d}<small>${WEEK[C.dayOfWeek(sh.date)]}</small></span>
           <span class="time">${esc(sh.start)}–${esc(sh.end)}${tags ? `<small>${esc(tags)}</small>` : ''}</span>
           <span class="pay">${r.error ? '—' : yen(r.pay.total)}</span>
@@ -120,6 +121,43 @@
     }).join('');
     $('#yearBox').innerHTML = `<div class="wall"><div class="wall-head"><span>給与（交通費を除く）</span><span>${yen(ys.salary)}</span></div></div>` + walls;
   }
+  // ---------- 今までに稼いだ額（1分ごとに更新） ----------
+  function nowParts() {
+    const d = new Date();
+    return { date: today(), min: d.getHours() * 60 + d.getMinutes(), hm: d.getHours() + ':' + String(d.getMinutes()).padStart(2, '0') };
+  }
+  function renderLive(sum) {
+    const box = $('#live');
+    const now = nowParts();
+    // 今の締め月を見ているときだけ表示
+    if (curYM !== C.closingMonthOf(state.settings, now.date) || !sum.rows.length) { box.hidden = true; return null; }
+    const e = C.earnedUntil(state.settings, state.shifts, curYM, now.date, now.min);
+    box.hidden = false;
+    $('#liveTime').textContent = `${now.hm} 時点`;
+    const planned = sum.sum.salary;
+    $('#liveEarned').innerHTML = `${yen(e.earned)}<small>／ ${yen(planned)}</small>`;
+    $('#liveBar').style.width = (planned ? Math.min(100, (e.earned / planned) * 100) : 0) + '%';
+    let sub = '';
+    if (e.current) {
+      const c = e.current;
+      sub = `<div><span class="pulse"></span>勤務中 ${esc(c.shift.start)}–${esc(c.shift.end)}・あと${hours(c.remainingMin)}</div>` +
+        `<div>このシフト <b>${yen(c.earned)}</b> ／ ${yen(c.full)}</div>`;
+    } else if (e.next) {
+      const n = e.next.shift;
+      const when = n.date === now.date ? '今日' : `${md(n.date)}(${WEEK[C.dayOfWeek(n.date)]})`;
+      sub = `次のシフト　${when} ${esc(n.start)}–${esc(n.end)}`;
+    }
+    $('#liveSub').innerHTML = sub;
+    return e;
+  }
+  // 分が変わるタイミングで更新
+  function tick() {
+    if ($('#tab-pay').classList.contains('active') && !document.hidden) render();
+    setTimeout(tick, 60000 - (Date.now() % 60000) + 50);
+  }
+  setTimeout(tick, 60000 - (Date.now() % 60000) + 50);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) render(); });
+
   $('#shiftList').addEventListener('click', (e) => {
     const li = e.target.closest('li[data-id]');
     if (li) openSheet(li.dataset.id);

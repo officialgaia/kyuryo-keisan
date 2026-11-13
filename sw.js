@@ -1,6 +1,6 @@
 /* オフラインでも開けるようにするサービスワーカー。
  * ネットにつながるときは最新を取りに行き（更新がすぐ反映される）、つながらないときは保存しておいたものを使う。 */
-const CACHE = 'kyuryo-keisan-v4';
+const CACHE = 'kyuryo-keisan-v5';
 const FILES = ['./', 'index.html', 'style.css', 'calc.js', 'app.js', 'manifest.webmanifest',
   'icons/apple-touch-icon.png', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/favicon-32.png'];
 

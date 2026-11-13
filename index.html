@@ -31,6 +31,14 @@
         <div id="totalSub" class="muted"></div>
       </div>
 
+      <!-- 今までに稼いだ額（今の締め月を見ているときだけ表示） -->
+      <div id="live" class="group live" hidden>
+        <div class="live-head"><span>今までに稼いだ額</span><span id="liveTime" class="muted"></span></div>
+        <div id="liveEarned" class="live-num"></div>
+        <div class="meter"><span id="liveBar"></span></div>
+        <div id="liveSub" class="live-sub"></div>
+      </div>
+
       <details class="group">
         <summary>内訳</summary>
         <dl id="breakdown" class="rows"></dl>

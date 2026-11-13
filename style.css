@@ -142,3 +142,17 @@ dialog .label { margin: 0 4px 6px; }
   position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom) + 76px); transform: translateX(-50%);
   background: var(--text); color: var(--bg); padding: 9px 16px; border-radius: 10px; font-size: 14px; z-index: 20;
 }
+
+/* 今までに稼いだ額 */
+.live { padding: 14px 16px; }
+.live-head { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); }
+.live-num { font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums; margin: 2px 0 8px; }
+.live-num small { font-size: 14px; font-weight: 400; color: var(--muted); margin-left: 6px; }
+.live .meter { margin: 0 0 10px; }
+.live-sub { font-size: 13.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.live-sub:empty { display: none; }
+.live-sub b { color: var(--text); font-weight: 600; }
+.pulse { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #30d158; margin-right: 6px; vertical-align: 1px; animation: pulse 1.6s ease-in-out infinite; }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+.list li.now .time { color: var(--text); }
+.list li.now .day::after { content: ''; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #30d158; margin-left: 5px; vertical-align: 2px; }

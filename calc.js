@@ -91,7 +91,8 @@
    * 1 シフト分の内訳。priorWorkedMin = 同じ日の前のシフトで働いた分（残業を日単位で判定するため）
    * 休憩はシフトの中ほどに置いて計算する（深夜にかかるかどうかに影響するため）
    */
-  function calcShift(settings, shift, priorWorkedMin) {
+  function calcShift(settings, shift, priorWorkedMin, cutoff) {
+    // cutoff：シフトの日付の 0:00 から数えた分。指定するとその時刻までの分だけ計算する（「今までに稼いだ額」用）
     priorWorkedMin = priorWorkedMin || 0;
     let start = toMin(shift.start);
     let end = toMin(shift.end);
@@ -107,7 +108,8 @@
     const thr = settings.overtime && settings.overtime.enabled ? Number(settings.overtime.thresholdHours) * 60 : Infinity;
     // 深夜だけ / 残業だけ / 深夜かつ残業 に分けて数える
     let worked = 0, nightOnly = 0, otOnly = 0, both = 0;
-    for (let m = start; m < end; m++) {
+    const stop = cutoff == null ? end : Math.min(end, cutoff);
+    for (let m = start; m < stop; m++) {
       if (m >= bs && m < be) continue;
       worked++;
       const isOt = priorWorkedMin + worked > thr;
@@ -146,10 +148,11 @@
     const workedByDate = {};
     const daily = settings.transport && settings.transport.mode === 'daily';
     return sorted.map((s) => {
-      const result = calcShift(settings, s, workedByDate[s.date] || 0);
+      const prior = workedByDate[s.date] || 0;
+      const result = calcShift(settings, s, prior);
       const first = !(s.date in workedByDate); // 交通費は 1 日 1 回（その日の最初のシフトの交通費）
-      workedByDate[s.date] = (workedByDate[s.date] || 0) + result.workedMin;
-      return { shift: s, result, transport: daily && first ? transportOf(settings, s) : 0 };
+      workedByDate[s.date] = prior + result.workedMin;
+      return { shift: s, result, prior, transport: daily && first ? transportOf(settings, s) : 0 };
     });
   }
 
@@ -208,6 +211,41 @@
     sum.salary = sum.base + sum.night + sum.overtime + sum.nightOvertime; // 交通費を除いた給与
     sum.total = sum.salary + sum.transport;
     return { closingYM, period: p, payDate: payDateFor(settings, closingYM), rows, sum };
+  }
+
+  function daysBetween(a, b) {
+    return Math.round((parseDate(b) - parseDate(a)) / 86400000);
+  }
+
+  /**
+   * 今の時刻までに稼いだ額（締め月の中、入力済みのシフトの時間だけ。分単位）
+   * nowDate = 'YYYY-MM-DD'、nowMin = その日の 0:00 からの分
+   * 交通費は含めない（給与だけ）。端数処理は月の集計と同じ
+   */
+  function earnedUntil(settings, shifts, closingYM, nowDate, nowMin) {
+    const p = periodFor(settings, closingYM);
+    const rows = calcShifts(settings, shifts.filter((s) => s.date >= p.from && s.date <= p.to));
+    const sum = { base: 0, night: 0, overtime: 0, nightOvertime: 0 };
+    let workedMin = 0, current = null, next = null;
+    rows.forEach(({ shift, result, prior }) => {
+      if (result.error) return;
+      const start = toMin(shift.start);
+      let end = toMin(shift.end);
+      if (end <= start) end += DAY;
+      const cutoff = daysBetween(shift.date, nowDate) * DAY + nowMin;
+      if (cutoff <= start) {
+        if (!next) next = { shift, pay: result.pay.total };
+        return;
+      }
+      const r = calcShift(settings, shift, prior, cutoff);
+      Object.keys(sum).forEach((k) => (sum[k] += r.pay[k]));
+      workedMin += r.workedMin;
+      if (cutoff < end) {
+        current = { shift, earned: r.pay.total, full: result.pay.total, workedMin: r.workedMin, remainingMin: end - cutoff };
+      }
+    });
+    const earned = Object.keys(sum).reduce((a, k) => a + Math.round(sum[k]), 0);
+    return { earned, workedMin, current, next };
   }
 
   /** 支給日ベースで 1 年分（1〜12 月支給分） */
@@ -273,6 +311,6 @@
 
   return {
     defaultSettings, toMin, addDays, dayOfWeek, wageOf, transportOf, calcShift, calcShifts,
-    periodFor, closingMonthOf, payDateFor, summarizePeriod, summarizeYear, migrate,
+    periodFor, closingMonthOf, payDateFor, summarizePeriod, summarizeYear, earnedUntil, migrate,
   };
 });

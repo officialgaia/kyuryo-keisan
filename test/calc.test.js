@@ -154,3 +154,37 @@ test('前のバージョンのデータを読み込める（時給の改定履�
   assert.deepEqual(again.settings.transport.options, m.settings.transport.options);
   assert.equal(again.shifts[1].transport, 480);
 });
+
+test('今までに稼いだ額：シフトの途中なら働いた分だけ（分単位）', () => {
+  const shifts = [
+    { date: '2026-11-02', start: '17:00', end: '22:00', breakMin: 0, wageId: 'a' }, // 終わったシフト 6000
+    { date: '2026-11-13', start: '17:00', end: '22:00', breakMin: 0, wageId: 'a' }, // 勤務中
+    { date: '2026-11-20', start: '17:00', end: '22:00', breakMin: 0, wageId: 'a' }, // まだ先
+  ];
+  const e = C.earnedUntil(base(), shifts, '2026-11', '2026-11-13', 18 * 60 + 31);
+  assert.equal(e.earned, 6000 + 91 * 20);
+  assert.equal(e.workedMin, 300 + 91);
+  assert.equal(e.current.shift.date, '2026-11-13');
+  assert.equal(e.current.remainingMin, 209);
+  assert.equal(e.next.shift.date, '2026-11-20');
+  // シフトの前は0、終わったら全額
+  assert.equal(C.earnedUntil(base(), shifts.slice(1, 2), '2026-11', '2026-11-13', 16 * 60 + 59).earned, 0);
+  assert.equal(C.earnedUntil(base(), shifts.slice(1, 2), '2026-11', '2026-11-13', 23 * 60).earned, 6000);
+});
+
+test('今までに稼いだ額：休憩中は増えない', () => {
+  // 10:00〜16:00 休憩60分（中ほど 12:30〜13:30）
+  const sh = [{ date: '2026-11-13', start: '10:00', end: '16:00', breakMin: 60, wageId: 'a' }];
+  assert.equal(C.earnedUntil(base(), sh, '2026-11', '2026-11-13', 12 * 60 + 30).earned, 3000);
+  assert.equal(C.earnedUntil(base(), sh, '2026-11', '2026-11-13', 13 * 60 + 15).earned, 3000);
+  assert.equal(C.earnedUntil(base(), sh, '2026-11', '2026-11-13', 13 * 60 + 45).earned, 3300);
+});
+
+test('今までに稼いだ額：深夜・深夜残業・日付またぎ', () => {
+  // 14:00〜24:30 休憩90分 → 23:45 時点：実働495分、深夜だけ90分、深夜残業15分
+  const sh = [{ date: '2026-11-13', start: '14:00', end: '00:30', breakMin: 90, wageId: 'a' }];
+  assert.equal(C.earnedUntil(base(), sh, '2026-11', '2026-11-13', 23 * 60 + 45).earned, 9900 + 450 + 150);
+  // 前日21:00〜翌2:00 のシフトを、翌日1:00 に見る → 240分、うち深夜180分
+  const over = [{ date: '2026-11-12', start: '21:00', end: '02:00', breakMin: 0, wageId: 'a' }];
+  assert.equal(C.earnedUntil(base(), over, '2026-11', '2026-11-13', 60).earned, 4800 + 900);
+});
